@@ -1,0 +1,64 @@
+/* ============ 超级梦幻 ============ */
+
+/* 我的手牌牌型摘要 */
+.sm-handinfo {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gold-strong);
+  background: rgba(212, 176, 106, .12);
+  border: 1px solid var(--gold-dim);
+}
+
+/* 座位上的庄家高亮 */
+.xh-seat.is-dealer { border-color: rgba(212, 176, 106, .4); background: linear-gradient(170deg, rgba(212, 176, 106, .14), rgba(0, 0, 0, .18)); }
+
+/* 闷牌徽标 */
+.pod-badge.sm-blind { color: #e8a67a; border-color: rgba(232, 166, 122, .45); background: rgba(232, 166, 122, .14); }
+
+/* 座位信息里的叫酒 / 开牌状态 */
+.sm-bet { color: var(--gold-dim); }
+.sm-bet b { color: var(--gold-strong); font-size: 12.5px; }
+.sm-op { font-size: 10.5px; padding: 1px 6px; border-radius: 5px; }
+.sm-op.fold { color: #f09a89; background: rgba(226, 112, 91, .14); }
+.sm-op.fight { color: #9fe0bd; background: rgba(99, 192, 138, .14); }
+.sm-info { font-size: 10px; color: var(--gold-strong); }
+
+/* 中央：比牌展示 */
+.sm-fight {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.sm-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.sm-reveal-name { font-size: 12px; color: var(--text-dim); }
+.sm-reveal-cards { display: flex; gap: 8px; }
+.sm-handtag { font-size: 12px; }
+.sm-vs { font-size: 20px; font-weight: 700; color: var(--gold-strong); }
+.sm-fight-result {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.sm-fight-result.win { color: #7fd6a4; }
+.sm-fight-result.lose { color: #f09a89; }
+
+/* 手机端：比牌区紧凑 */
+@media (max-width: 760px) {
+  .sm-fight { gap: 10px; }
+  .sm-vs { font-size: 16px; }
+  .sm-reveal-cards .pcard--lg { --cw: 72px; }
+  .sm-handinfo { font-size: 12px; padding: 3px 9px; }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "jiuzhuo-game",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "酒桌游戏 - 家庭聚会多人实时网页应用（推饼子 / 纸牌西游记 / 超级梦幻）",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/run.js && node test/xihua.js && node test/supermeng.js && node test/stats.js",
+    "test:e2e": "node test/e2e.js && node test/e2e-xihua.js && node test/e2e-supermeng.js",
+    "shots": "node test/shots.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.16.0",
+    "socket.io-client": "^4.8.4"
+  }
+}

@@ -1,0 +1,31 @@
+services:
+  jiuzhuo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jiuzhuo-game:1.0.0
+    container_name: jiuzhuo-game
+    restart: unless-stopped
+    # 容器内固定监听 9876，宿主机同样映射到 9876
+    ports:
+      - "9876:9876"
+    environment:
+      PORT: "9876"
+      TZ: Asia/Shanghai
+      # 内置管理员账号，首次启动时创建；如需修改请在首次启动前设置
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin"
+    volumes:
+      # SQLite 数据持久化，NAS 上建议指向共享目录
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9876/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
