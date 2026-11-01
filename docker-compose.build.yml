@@ -1,0 +1,29 @@
+services:
+  jiuzhuo:
+    # 源码构建版（本地开发 / 想自己打包时用）
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jiuzhuo-game:1.0.0
+    container_name: jiuzhuo-game
+    restart: unless-stopped
+    ports:
+      - "9876:9876"
+    environment:
+      PORT: "9876"
+      TZ: Asia/Shanghai
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9876/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
