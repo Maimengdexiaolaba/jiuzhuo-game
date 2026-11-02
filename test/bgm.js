@@ -74,12 +74,13 @@ await sleep(2000);
 const oscB = await page.evaluate(() => window.__osc);
 check('BGM 持续合成音符（2s 内有新音）', oscB - oscA >= 3, `+${oscB - oscA}`);
 
-// 进入牌局场景
-await page.evaluate(() => window.App.bgm.set('room'));
-await sleep(300);
-const roomState = await page.evaluate(() => ({ mood: window.App.bgm.mood(), playing: window.App.bgm.playing() }));
-check('切到 room 后场景正确', roomState.mood === 'room', JSON.stringify(roomState));
-check('切到 room 后仍在运行', roomState.playing === true);
+// 进入牌局场景（走真实 navigate 路径，验证 app.js 的场景切换接线）
+const navState = await page.evaluate(() => {
+  try { window.App.navigate('room'); } catch (e) { /* 无牌局状态时渲染可能抛错，忽略 */ }
+  return { mood: window.App.bgm.mood(), playing: window.App.bgm.playing() };
+});
+check('navigate 到牌桌后切为 room 场景', navState.mood === 'room', JSON.stringify(navState));
+check('牌桌场景 BGM 在运行', navState.playing === true);
 
 // 关音效 → BGM 停
 await page.evaluate(() => {
