@@ -1,13 +1,14 @@
 import { toast, openModal, confirmDialog, escapeHTML, initials, closeAllModals } from './ui.js';
 import { tileHTML, handBadgeHTML } from './tiles.js';
 import { playShuffle, playDice, playCut } from './fx.js';
+import { sfx, speak } from './audio.js';
 import {
   xihuaTableHTML, syncXihuaModal, resetXihuaView,
   setXihuaSelection, setXihuaCount, reopenXihuaSettle, openRulesModal,
 } from './xihua.js';
 import {
   supermengTableHTML, syncSupermengModal, resetSupermengView,
-  reopenSupermengSettle, openSupermengConfig,
+  reopenSupermengSettle, openSupermengConfig, openSupermengHistory,
 } from './supermeng.js';
 
 const PHASE_LABEL = {
@@ -33,7 +34,7 @@ const GAME_ACTS = [
   'shuffle', 'rollCutDice', 'cut', 'skipCut', 'bet', 'rollDealDice',
   'revealDealer', 'revealSelf', 'nextRound', 'closeSummary', 'pickDealer',
   'play', 'pass', 'ackPenalty',
-  'blindChoice', 'changeCards', 'skipChange', 'lock', 'open', 'fold', 'fight', 'stopOpen',
+  'blindChoice', 'changeCards', 'skipChange', 'lock', 'open', 'fold', 'fight', 'stopOpen', 'peek',
 ];
 
 let lastSeq = 0;
@@ -44,6 +45,7 @@ let currentModalSig = '';
 let dismissedKeys = new Set();
 let lastModalPhase = null;
 let prevRevealed = new Set();
+let dealAnimActive = false; // 发牌动画进行中：期间自己手牌显示牌背
 
 export function mountRoom(App) {
   const shell = document.getElementById('room-shell');
@@ -180,6 +182,11 @@ async function handleAction(App, btn) {
     return;
   }
 
+  if (act === 'smHistory') {
+    openSupermengHistory(App, room);
+    return;
+  }
+
   if (act === 'smConfig') {
     openSupermengConfig(App, room);
     return;
@@ -251,6 +258,8 @@ function render(App) {
     : null;
   const hideHands = newEv?.type === 'deal';
 
+  const isSpectator = !!room.isSpectator;
+
   shell.innerHTML = `
     ${tableBar(App, room, game, isXihua)}
     ${game && isXihua
@@ -261,10 +270,12 @@ function render(App) {
           ${game ? stepsBar(game) : ''}
           ${game ? seatsHTML(App, room, game, hideHands) : waitingSeatsHTML(room)}
           ${game ? centerStage(room, game) : waitingCenter(room)}
-          ${game ? actionSeat(App, room, game, me, isDealer) : waitingAction(App, room, me)}
+          ${isSpectator
+            ? '<div class="spectator-bar"><i class="pulse"></i>观 战 中 · 仅可见公共牌面</div>'
+            : game ? actionSeat(App, room, game, me, isDealer) : waitingAction(App, room, me)}
         </div>`}`;
 
-  if (game) {
+  if (game && !isSpectator) {
     if (isXihua) {
       syncXihuaModal(App, room);
     } else if (isSupermeng) {
@@ -285,6 +296,8 @@ function render(App) {
 function tableBar(App, room, game, isXihua = false) {
   const chips = (room.configText || []).map((t) => `<span class="chip">${escapeHTML(t)}</span>`).join('');
   const phaseText = game ? (game.phaseText || PHASE_LABEL[game.phase] || '') : '';
+  const isSpectator = !!room.isSpectator;
+  const isSupermeng = room.gameId === 'supermeng';
   return `
     <div class="table-bar">
       <div class="tb-left">
@@ -292,16 +305,18 @@ function tableBar(App, room, game, isXihua = false) {
         <div class="tb-chips">
           <span class="chip gold">${escapeHTML(room.gameName)}</span>
           ${chips}
+          ${isSpectator ? '<span class="chip spec">观战中</span>' : ''}
         </div>
       </div>
       <div class="tb-right">
         ${game
           ? `<span class="phase-pill"><i class="pulse"></i>${phaseText}</span>`
           : '<span class="phase-pill"><i class="pulse"></i>等待开局</span>'}
-        ${!isXihua && game?.history?.length ? `<button class="btn btn-ghost btn-sm" data-act="openHistory">历史回放</button>` : ''}
-        ${!isXihua && game?.results ? '<button class="btn btn-ghost btn-sm" data-act="openSettle">结算详情</button>' : ''}
-        ${isXihua ? '<button class="btn btn-ghost btn-sm" data-act="xhRules">玩法说明</button>' : ''}
-        <button class="btn btn-ghost btn-sm" data-act="leave">退出房间</button>
+        ${!isSpectator && !isXihua && !isSupermeng && game?.history?.length ? `<button class="btn btn-ghost btn-sm" data-act="openHistory">历史回放</button>` : ''}
+        ${!isSpectator && isSupermeng && game?.history?.length ? `<button class="btn btn-ghost btn-sm" data-act="smHistory">历史回放</button>` : ''}
+        ${!isSpectator && !isXihua && game?.results ? '<button class="btn btn-ghost btn-sm" data-act="openSettle">结算详情</button>' : ''}
+        ${!isSpectator && isXihua ? '<button class="btn btn-ghost btn-sm" data-act="xhRules">玩法说明</button>' : ''}
+        <button class="btn btn-ghost btn-sm" data-act="leave">${isSpectator ? '退出观战' : '退出房间'}</button>
       </div>
     </div>`;
 }
@@ -541,7 +556,8 @@ function centerStage(room, game) {
 function actionSeat(App, room, game, me, isDealer) {
   const myHand = me?.hand || [];
   const newlyRevealed = me?.revealed && !prevRevealed.has(room.mySeat);
-  const showHand = myHand.length > 0;
+  // 发牌动画进行中：自己手牌先显示牌背，动画结束后翻面
+  const showHand = myHand.length > 0 && !dealAnimActive;
   const preDeal = ['shuffle', 'cut_dice', 'cut_choice', 'bet'].includes(game.phase);
 
   prevRevealed = new Set(
@@ -560,7 +576,7 @@ function actionSeat(App, room, game, me, isDealer) {
               ? Array.from({ length: me.handCount }, () => tileHTML(null, { size: 'xl' })).join('')
               : `<span style="font-size:12.5px;color:var(--muted)">${preDeal ? '尚未发牌' : ''}</span>`)}
         </div>
-        ${info ? `
+        ${info && !dealAnimActive ? `
           <div class="my-hand-meta">
             ${handBadgeHTML(info)}
             ${info.showPoints ? `<span class="mh-point">${info.point} 点</span>` : ''}
@@ -739,21 +755,44 @@ function handleEvents(room, game, newEv) {
   lastSeq = ev.seq;
   if (gap > 3) return;
 
-  if (ev.type === 'shuffle') playShuffle();
+  if (ev.type === 'shuffle') { playShuffle(); sfx.shuffle(); }
   else if (ev.type === 'dice') {
+    sfx.dice();
     playDice({
       d1: ev.d1, d2: ev.d2, total: ev.total,
       targetName: ev.targetName, isDealer: ev.isDealer, purpose: ev.purpose,
     });
-  } else if (ev.type === 'cut') playCut(ev.index);
+  } else if (ev.type === 'cut') { playCut(ev.index); sfx.cut(); }
   else if (ev.type === 'deal') {
+    sfx.deal();
+    dealAnimActive = true;
     playDice({
       d1: ev.d1, d2: ev.d2, total: ev.total,
       targetName: ev.firstName,
       isDealer: ev.firstSeat === game.dealerSeat,
       purpose: 'deal',
-    }).then(() => runDealAnim(ev.order || []));
+    }).then(() => runDealAnim(ev.order || [])).finally(() => {
+      dealAnimActive = false;
+      window.App?.renderers?.room?.();
+    });
+  } else if (ev.type === 'revealDealer') {
+    sfx.reveal();
+    // 庄家亮牌后播报牌型
+    const dealer = room.players.find((p) => p.seat === game.dealerSeat);
+    const info = dealer?.handInfo;
+    if (info) speakDealer(info);
+  } else if (ev.type === 'settle') {
+    sfx.win();
   }
+}
+
+/** 推饼子庄家亮牌播报 */
+function speakDealer(info) {
+  if (!info) return;
+  if (info.key === 'birdPair') speak(['dealer_bird']);
+  else if (info.key === 'erba') speak(['dealer_erba']);
+  else if (info.isPair) speak(['dealer_pair']);
+  else speak([`dealer_${info.point}`]);
 }
 
 function runDealAnim(order) {

@@ -884,3 +884,25 @@ body.in-room .felt:not(.felt-xihua) {
   .felt-waiting .seats { grid-template-columns: repeat(3, 1fr); }
   .felt-waiting .pod { padding: 6px 7px; }
 }
+
+/* ---------- 观战 ---------- */
+
+.spectator-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px dashed rgba(212, 176, 106, .4);
+  background: rgba(212, 176, 106, .06);
+  color: var(--gold-strong);
+  font-size: 14px;
+  letter-spacing: .06em;
+  margin-top: 4px;
+}
+.chip.spec {
+  color: #9fd0ff;
+  border-color: rgba(99, 159, 255, .45);
+  background: rgba(99, 159, 255, .12);
+}

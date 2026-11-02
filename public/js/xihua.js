@@ -1,5 +1,6 @@
 import { escapeHTML, initials, openModal, closeAllModals } from './ui.js';
 import { playCardHTML, backCardHTML } from './playcards.js';
+import { sfx, speakXihuaPlay, speakXihuaPass } from './audio.js';
 
 const PHASE_TEXT = {
   play: '轮流出牌',
@@ -7,16 +8,25 @@ const PHASE_TEXT = {
   settle: '本局结算',
 };
 
+// 角色 rank -> 播报 roleKey
+const ROLE_KEY = {
+  8: 'bajie', 5: 'wukong', 2: 'jindouyun', 10: 'tangseng',
+  11: 'baigujing', 6: 'bailongma', 3: 'shaseng', 13: 'hongaier',
+  12: 'tieshan', 4: 'xiaozuanfeng', 9: 'niumowang', 7: 'zhizhujing', 14: 'dapeng',
+};
+
 let sel = { rank: null, count: 1 };
 let modalKey = null;
 let dismissed = false;
 let lastRound = null;
+let lastSeq = 0;
 
 export function resetXihuaView() {
   sel = { rank: null, count: 1 };
   modalKey = null;
   dismissed = false;
   lastRound = null;
+  lastSeq = 0;
 }
 
 /**
@@ -55,6 +65,34 @@ function nameOf(room, seat) {
   return room.players.find((p) => p.seat === seat)?.name || `座位 ${seat}`;
 }
 
+/** 西游记事件音效与播报 */
+function handleXihuaEvents(g) {
+  const ev = g?.lastEvent;
+  if (!ev) return;
+  if (!lastSeq) { lastSeq = ev.seq; return; }
+  if (ev.seq <= lastSeq) return;
+  lastSeq = ev.seq;
+
+  if (ev.type === 'play') {
+    sfx.play();
+    const roleKey = ROLE_KEY[ev.rank];
+    if (roleKey) speakXihuaPlay(ev.count, roleKey);
+  } else if (ev.type === 'passCard') {
+    sfx.play();
+    const roleKey = ROLE_KEY[ev.rank];
+    if (roleKey) speakXihuaPlay(1, roleKey);
+  } else if (ev.type === 'turnback') {
+    sfx.cut();
+    speakXihuaPlay(1, 'bailongma');
+  } else if (ev.type === 'collect') {
+    sfx.penalty();
+  } else if (ev.type === 'penalty') {
+    sfx.penalty();
+  } else if (ev.type === 'settle') {
+    sfx.win();
+  }
+}
+
 /* ---------------- 主牌桌 ---------------- */
 
 export function xihuaTableHTML(App, room) {
@@ -63,6 +101,10 @@ export function xihuaTableHTML(App, room) {
   const meta = g.meta || {};
   const myHand = room.myHand || [];
   const groups = groupHand(myHand);
+  const isSpectator = !!room.isSpectator;
+
+  // 事件驱动的音效与播报
+  handleXihuaEvents(g);
 
   const myTurn = g.phase === 'play' && g.currentSeat === me;
   const playable = new Set(room.hints?.playable || []);
@@ -79,7 +121,9 @@ export function xihuaTableHTML(App, room) {
     <div class="xh-center">
       ${xhTableCards(room, g)}
     </div>
-    <div class="xh-me">
+    ${isSpectator
+      ? '<div class="spectator-bar"><i class="pulse"></i>观 战 中 · 仅可见公共牌面</div>'
+      : `<div class="xh-me">
       <div class="xh-my-bar">
         <span class="xh-my-title">我的手牌</span>
         <span class="xh-my-count">剩 <b>${myHand.length}</b> 张</span>
@@ -101,7 +145,7 @@ export function xihuaTableHTML(App, room) {
           : '<span class="xh-empty-hand">手牌已出完</span>'}
       </div>
       <div class="xh-actions">${xihuaActions(App, room, g, myTurn, selCards, table, playable)}</div>
-    </div>
+    </div>`}
     ${g.phase === 'penalty' ? xhPenaltyOverlay(room, g) : ''}
   </div>`;
 }
@@ -228,15 +272,25 @@ function xihuaActions(App, room, g, myTurn, selCards, table, playable) {
   const cards = selCards.slice(0, need);
   const ids = cards.map((c) => c.id).join(',');
 
-  if (isPass) {
+  if (isPass || isDragon) {
+    // 2/6 也可选多张（功能不变：2=过牌、6=转上家）；跟牌时张数必须与桌面一致
+    const maxForSpecial = table ? table.count : Math.min(selCards.length, g.maxPlay || 4);
+    const countPicker = !table
+      ? `<div class="xh-count-picker">
+           ${Array.from({ length: maxForSpecial }, (_, i) => i + 1)
+             .map((n) => `<button class="xh-count-btn ${n === need ? 'is-on' : ''}" data-act="xhCount" data-count="${n}">${n} 张</button>`)
+             .join('')}
+         </div>`
+      : '';
+    const label = isPass ? '过 牌' : '白 龙 马';
+    const tip = isPass ? '筋斗云是过牌：让过、不罚、不收牌' : '';
+    const canPlay = selCards.length >= need;
     return `
-      <button class="btn btn-primary" data-act="play" data-cards="${ids}">出 过 牌</button>
-      <div class="action-tip">筋斗云是过牌：相当于这一轮管不住，但不罚、不收牌</div>`;
-  }
-  if (isDragon) {
-    return `
-      <button class="btn btn-primary" data-act="play" data-cards="${ids}">出 白 龙 马</button>
-      <div class="action-tip">白龙马：牌留在桌面，出牌权交给上家继续管</div>`;
+      ${countPicker}
+      <button class="btn btn-primary" data-act="play" data-cards="${ids}" ${canPlay ? '' : 'disabled'}>
+        出 ${need} 张${label}
+      </button>
+      ${tip ? `<div class="action-tip">${tip}</div>` : ''}`;
   }
 
   const maxForRank = Math.min(

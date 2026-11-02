@@ -90,6 +90,38 @@
 
 .pcard--back { background: #6c1b1b; }
 
+/* 牌角角标：大号数字 + 花色，独立渲染保证可读性 */
+.pcard-corner {
+  position: absolute;
+  top: calc(var(--cw) * 0.045);
+  left: calc(var(--cw) * 0.06);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 0 3px rgba(255, 255, 255, .55);
+  font-weight: 700;
+}
+.pcard-corner b {
+  font-size: calc(var(--cw) * 0.34);
+  letter-spacing: -0.03em;
+}
+.pcard-corner i {
+  font-style: normal;
+  font-size: calc(var(--cw) * 0.22);
+  margin-top: calc(var(--cw) * 0.01);
+}
+.pcard-corner.red { color: #d22b2b; }
+.pcard-corner.black { color: #1c1c1c; }
+.pcard-corner.joker {
+  font-size: calc(var(--cw) * 0.26);
+  color: #c0392b;
+  writing-mode: vertical-rl;
+  letter-spacing: 0.04em;
+}
+
 .rules-img { max-width: 100%; max-height: 78vh; width: auto; display: block; margin: 0 auto; border-radius: 12px; cursor: zoom-in; }
 
 /* ---------- 牌桌 ---------- */

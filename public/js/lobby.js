@@ -12,14 +12,20 @@ export function mountLobby(App) {
   document.getElementById('btn-create').addEventListener('click', () => openCreateModal(App));
 
   document.getElementById('room-grid').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-join]');
-    if (!btn) return;
-    if (btn.disabled) return;
-    const roomId = btn.dataset.join;
-    btn.disabled = true;
-    const res = await App.call('room:join', { roomId });
-    btn.disabled = false;
-    if (res.error) toast(res.error, 'error');
+    const joinBtn = e.target.closest('[data-join]');
+    const spectateBtn = e.target.closest('[data-spectate]');
+    if (joinBtn) {
+      if (joinBtn.disabled) return;
+      joinBtn.disabled = true;
+      const res = await App.call('room:join', { roomId: joinBtn.dataset.join });
+      joinBtn.disabled = false;
+      if (res.error) toast(res.error, 'error');
+    } else if (spectateBtn) {
+      spectateBtn.disabled = true;
+      const res = await App.call('room:spectate', { roomId: spectateBtn.dataset.spectate });
+      spectateBtn.disabled = false;
+      if (res.error) toast(res.error, 'error');
+    }
   });
 
   App.renderers.lobby = () => render(App);
@@ -82,10 +88,12 @@ function render(App) {
         </div>
         <div class="room-card-foot">
           <span class="seat-meter"><b>${r.playerCount}</b> / ${r.capacity} 人</span>
-          <button class="btn ${canJoin ? 'btn-primary' : 'btn-ghost'} btn-sm"
-            data-join="${escapeHTML(r.id)}" ${canJoin ? '' : 'disabled'}>
-            ${canJoin ? '加入房间' : r.status === 'playing' ? '观战中' : '已满员'}
-          </button>
+          ${r.status === 'playing'
+            ? `<button class="btn btn-ghost btn-sm" data-spectate="${escapeHTML(r.id)}">观 战</button>`
+            : `<button class="btn ${canJoin ? 'btn-primary' : 'btn-ghost'} btn-sm"
+                data-join="${escapeHTML(r.id)}" ${canJoin ? '' : 'disabled'}>
+                ${canJoin ? '加入房间' : '已满员'}
+              </button>`}
         </div>
       </article>`;
     })
@@ -170,11 +178,11 @@ function openCreateModal(App) {
           <div class="config-row">
             <div>
               <div class="cr-label">${escapeHTML(s.label)}</div>
-              <div class="cr-hint">${escapeHTML((s.options.find((o) => o.value === values[s.key]) || {}).desc || s.hint || '')}</div>
+              <div class="cr-hint">${escapeHTML((s.options.find((o) => String(o.value) === String(values[s.key])) || {}).desc || s.hint || '')}</div>
             </div>
             <div class="enum-group" data-enum="${s.key}">
               ${(s.options || []).map((o) => `
-                <button type="button" class="enum-btn ${values[s.key] === o.value ? 'is-on' : ''}"
+                <button type="button" class="enum-btn ${String(values[s.key]) === String(o.value) ? 'is-on' : ''}"
                         data-enum-key="${s.key}" data-enum-val="${o.value}">${escapeHTML(o.label)}</button>`).join('')}
             </div>
           </div>`;
@@ -232,7 +240,11 @@ function openCreateModal(App) {
   configBlock.addEventListener('click', (e) => {
     const b = e.target.closest('[data-enum-key]');
     if (!b) return;
-    values[b.dataset.enumKey] = b.dataset.enumVal;
+    // 找到该配置项，把 option 的原始 value 类型（数字/字符串）还原，避免 "2" !== 2 导致选中态失效
+    const game = games.find((g) => g.id === selectedId);
+    const schema = (game.configSchema || []).find((s) => s.key === b.dataset.enumKey);
+    const opt = (schema?.options || []).find((o) => String(o.value) === String(b.dataset.enumVal));
+    values[b.dataset.enumKey] = opt ? opt.value : b.dataset.enumVal;
     paintGame();
   });
 

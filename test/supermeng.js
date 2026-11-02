@@ -210,6 +210,75 @@ test('多种配置多人数自动对局无死锁', () => {
   }
 });
 
+test('干2（g2）：叫酒上限保留 g2，不归一成 3', () => {
+  assert(cfg({ betMax: 'g2' }).betMax === 'g2', 'normalizeConfig 应保留 g2');
+  // engine 内部 normalizeConfig 也必须保留 g2（此前 bug：被归一成 3）
+  assert(engine.normalizeConfig({ betMax: 'g2' }).betMax === 'g2', 'engine.normalizeConfig 应保留 g2');
+});
+
+test('干2：全场默认 2 杯，跳过叫酒直接进开牌', () => {
+  const players = mkPlayers(4);
+  const st = supermeng.createState({ playerCount: 4, config: { betMax: 'g2', dealerChange: 'none', allowBlind: false } });
+  st._players = players;
+  assert(st.phase === 'open', `干2应直接进开牌，实际 ${st.phase}`);
+  for (let s = 0; s < 4; s += 1) {
+    if (s !== st.dealerSeat) assert(st.bets[s] === 2, `闲家 ${s} 应默认 2 杯，实际 ${st.bets[s]}`);
+  }
+});
+
+test('闲家服了（fold）必输，不与庄家比牌', () => {
+  const players = mkPlayers(3);
+  // 庄家 seat 0，闲家 seat 1、2；关闭闷牌、不换牌，快速到开牌
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  let guard = 0;
+  // 手动走：闲家依次叫酒
+  while (st.phase === 'bet' && guard < 10) {
+    guard += 1;
+    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 1 });
+    if (!r.ok) throw new Error(r.error);
+  }
+  assert(st.phase === 'open', `应进开牌，实际 ${st.phase}`);
+  // 庄家开闲家 1
+  let r = engine.applyAction(st, players, st.dealerSeat, 'open', { seat: 1 });
+  assert(r.ok, r.error);
+  // 闲家 1 服了
+  r = engine.applyAction(st, players, 1, 'fold', {});
+  assert(r.ok, r.error);
+  // 结束开牌 → 结算
+  r = engine.applyAction(st, players, st.dealerSeat, 'stopOpen', {});
+  assert(r.ok, r.error);
+  const row = st.results.rows.find((x) => x.seat === 1);
+  assert(row && row.outcome === 'fold', '服了的闲家 outcome 应为 fold');
+  assert(row.seatCups === row.bet, '服了应只喝所押杯，不翻倍');
+  assert(row.lostByDealer === 0, '服了庄家不赔');
+});
+
+test('所有模式庄家至少开一家（换牌模式也不能一家不开）', () => {
+  // 换牌模式（dealerChange='once'）：庄家试图 0 家结束应被拒绝
+  const players = mkPlayers(3);
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'once', betMax: 3 } });
+  st._players = players;
+  let guard = 0;
+  // 若进入换牌阶段，庄家跳过换牌
+  while (st.phase === 'dealer_change' && guard < 3) {
+    guard += 1;
+    const r = engine.applyAction(st, players, st.dealerSeat, 'skipChange', {});
+    if (!r.ok) throw new Error(r.error);
+  }
+  guard = 0;
+  while (st.phase === 'bet' && guard < 10) {
+    guard += 1;
+    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 1 });
+    if (!r.ok) throw new Error(r.error);
+  }
+  assert(st.phase === 'open', `应进开牌，实际 ${st.phase}`);
+  // 庄家 0 家直接结束开牌 → 应被拒绝
+  const r = engine.applyAction(st, players, st.dealerSeat, 'stopOpen', {});
+  assert(!r.ok, '换牌模式 0 家结束开牌应被拒绝');
+  assert(r.error === '庄家至少开一家', `错误信息应为「庄家至少开一家」，实际 ${r.error}`);
+});
+
 test('大回合：打完整副牌触发移庄', () => {
   const players = mkPlayers(3);
   const st = supermeng.createState({ playerCount: 3, config: { withJoker: false, dealerChange: 'none', betMax: 1 } });

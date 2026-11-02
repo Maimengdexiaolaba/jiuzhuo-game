@@ -12,8 +12,9 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "test": "node test/run.js && node test/xihua.js && node test/supermeng.js && node test/stats.js",
-    "test:e2e": "node test/e2e.js && node test/e2e-xihua.js && node test/e2e-supermeng.js",
-    "shots": "node test/shots.js"
+    "test:e2e": "node test/e2e.js && node test/e2e-xihua.js && node test/e2e-supermeng.js && node test/e2e-extra.js",
+    "shots": "node test/shots.js",
+    "test:bgm": "node test/bgm.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

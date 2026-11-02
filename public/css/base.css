@@ -713,3 +713,105 @@ body.in-room .room-shell { min-height: 0; min-width: 0; flex: 1; }
   .user-chip .u-role { display: none; }
   .topbar .btn-sm { padding: 5px 8px; font-size: 11.5px; }
 }
+
+/* ---------- 手机：管理后台表格转卡片 ---------- */
+
+@media (max-width: 760px) {
+  .admin-head { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .admin-head .lobby-head-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .admin-card { padding: 4px; }
+  .admin-card .table-scroll { overflow: visible; }
+
+  .admin-card .data-table { min-width: 0 !important; display: block; }
+  .admin-card .data-table thead { display: none; }
+  .admin-card .data-table tbody { display: block; }
+  .admin-card .data-table tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    padding: 12px;
+    margin-bottom: 9px;
+    border: 1px solid rgba(255, 255, 255, .09);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, .16);
+  }
+  .admin-card .data-table td {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    font-size: 12.5px;
+  }
+  .admin-card .data-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: .04em;
+    flex: none;
+  }
+  .admin-card .data-table td:nth-child(1) {
+    flex: 1 1 100%;
+    justify-content: space-between;
+    font-size: 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed rgba(255,255,255,.08);
+  }
+  .admin-card .data-table td:nth-child(1)::before { content: none; }
+  .admin-card .data-table td:nth-child(4) { flex: 1 1 100%; }
+  .admin-card .data-table td.col-actions { flex: 1 1 100%; }
+  .admin-card .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* 我的战绩弹窗 */
+  .stat-rate b { font-size: 28px; }
+  .stat-main { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .stat-nums { gap: 10px; }
+  .stat-nums .net { padding-left: 10px; }
+  .stat-card { padding: 14px 15px; }
+  .rules-box .rule-line { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .rules-box .rule-line span { word-break: break-word; line-height: 1.6; }
+}
+
+/* ---------- 积分商城 ---------- */
+
+.shop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.shop-points { font-size: 15px; color: var(--text-dim); }
+.shop-points b { font-size: 24px; color: var(--gold-strong); margin-left: 4px; }
+.shop-hint { font-size: 12px; color: var(--muted); }
+
+.shop-list { display: grid; gap: 10px; }
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 13px;
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(160deg, rgba(255,255,255,.05), rgba(255,255,255,.012));
+}
+.shop-item-icon {
+  width: 44px; height: 44px; border-radius: 11px; flex: none;
+  display: grid; place-items: center; font-size: 22px;
+  background: linear-gradient(150deg, var(--gold-strong), #a9813f);
+}
+.shop-item-body { flex: 1; min-width: 0; }
+.shop-item-name { font-size: 14.5px; font-weight: 600; }
+.shop-item-desc { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.shop-item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.shop-item-price { font-size: 13px; color: var(--gold-strong); font-weight: 600; }
+
+@media (max-width: 760px) {
+  .shop-head { flex-direction: column; gap: 4px; }
+  .shop-item { flex-wrap: wrap; }
+  .shop-item-side { flex-direction: row; align-items: center; gap: 12px; }
+}

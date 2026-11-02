@@ -101,13 +101,12 @@ test('B 循环克制：妖吃唐僧、唐僧管徒弟、徒弟打妖怪', () => 
 
 /* ---------------- 出牌校验 ---------------- */
 
-test('出牌张数限制：A 最多 4 张、B 最多 2 张', () => {
+test('出牌张数：相同牌可一次出 1~4 张（A/B 方案一致）', () => {
   const four = [{ rank: 5 }, { rank: 5 }, { rank: 5 }, { rank: 5 }];
-  assert.ok(validatePlay(four, null, MODE_A).ok);
-  assert.ok(!validatePlay(four, null, MODE_B).ok, 'B 不能出 4 张');
-
+  assert.ok(validatePlay(four, null, MODE_A).ok, 'A 可出 4 张');
+  assert.ok(validatePlay(four, null, MODE_B).ok, 'B 也可出 4 张');
   const three = four.slice(0, 3);
-  assert.ok(!validatePlay(three, null, MODE_B).ok, 'B 不能出 3 张');
+  assert.ok(validatePlay(three, null, MODE_B).ok, 'B 可出 3 张');
 });
 
 test('必须同点数，且管牌必须同张数', () => {
@@ -119,12 +118,28 @@ test('必须同点数，且管牌必须同张数', () => {
   assert.ok(validatePlay([{ rank: 5 }, { rank: 5 }], table, MODE_A).ok, '悟空对可以管八戒对');
 });
 
-test('过牌 2 单张打出即为让过（有无牌可管都可以）', () => {
+test('过牌 2 可单张或多张打出，均为让过', () => {
   const lead = validatePlay([{ rank: 2 }], null, MODE_A);
-  assert.ok(lead.ok && lead.kind === 'pass', '没有可管牌时也能弃掉过牌让过');
+  assert.ok(lead.ok && lead.kind === 'pass', '单张 2 让过');
   const beat = validatePlay([{ rank: 2 }], { rank: 9, count: 1 }, MODE_A);
   assert.ok(beat.ok && beat.kind === 'pass');
-  assert.ok(!validatePlay([{ rank: 2 }, { rank: 2 }], null, MODE_A).ok, '过牌只能单张');
+  const multi = validatePlay([{ rank: 2 }, { rank: 2 }], null, MODE_A);
+  assert.ok(multi.ok && multi.kind === 'pass' && multi.count === 2, '多张 2 也是让过');
+});
+
+test('跟牌时 2/6 也必须与桌面同张数（问题 32）', () => {
+  const table3 = { rank: 5, count: 3 };
+  // 桌面 3 张，出 1 张 6 / 1 张 2 都要拦截
+  assert.ok(!validatePlay([{ rank: 6 }], table3, MODE_B).ok, '跟牌出 1 张 6 应被拦');
+  assert.ok(!validatePlay([{ rank: 2 }], table3, MODE_B).ok, '跟牌出 1 张 2 应被拦');
+  // 出 3 张 6 / 3 张 2 才通过
+  const r6 = validatePlay([{ rank: 6 }, { rank: 6 }, { rank: 6 }], table3, MODE_B);
+  assert.ok(r6.ok && r6.kind === 'turnback' && r6.count === 3, '跟牌出 3 张 6 转上家');
+  const r2 = validatePlay([{ rank: 2 }, { rank: 2 }, { rank: 2 }], table3, MODE_B);
+  assert.ok(r2.ok && r2.kind === 'pass' && r2.count === 3, '跟牌出 3 张 2 让过');
+  // 领出时 2/6 仍任意张
+  assert.ok(validatePlay([{ rank: 6 }], null, MODE_B).ok, '领出 1 张 6 仍可');
+  assert.ok(validatePlay([{ rank: 2 }, { rank: 2 }], null, MODE_B).ok, '领出 2 张 2 仍可');
 });
 
 /* ---------------- 自动对局 ---------------- */

@@ -3,9 +3,9 @@ import {
   RANK_TEXT, sideOfA,
 } from './cards.js';
 
-/** 每局最多出同点牌的张数：A 方案 1~4 张，B 方案 1~2 张 */
+/** 每局最多出同点牌的张数：同点牌最多 4 张，一次可出任意张（1~4） */
 export function maxPlayCount(mode) {
-  return mode === MODE_B ? 2 : 4;
+  return 4;
 }
 
 /** 是否为「过牌」2 */
@@ -102,22 +102,22 @@ export function validatePlay(cards, table, mode) {
     return { ok: false, error: `本玩法一次最多出 ${maxPlayCount(mode)} 张` };
   }
 
-  // 2 = 过牌：有牌可管时甩出去免罚；手上只剩过牌时也可以弃掉让过
+  // 跟牌阶段：任何牌（含 2/6 功能牌）都必须张数与桌面一致
+  if (table && count !== table.count) {
+    return { ok: false, error: `需要出 ${table.count} 张才能管` };
+  }
+
+  // 2 = 过牌：可单张或多张甩出，都是让过（不罚、不收牌）
   if (isPassCard(rank)) {
-    if (count !== 1) return { ok: false, error: '过牌只能单张打出' };
     return { ok: true, rank, count, kind: 'pass' };
   }
 
-  // B 方案白龙马：任何时候可打出，出牌权交给上家
+  // B 方案白龙马：可单张或多张甩出，出牌权交给上家
   if (isTurnBackCard(rank, mode)) {
-    if (count !== 1) return { ok: false, error: '白龙马只能单张打出' };
     return { ok: true, rank, count, kind: 'turnback' };
   }
 
   if (table) {
-    if (count !== table.count) {
-      return { ok: false, error: `需要出 ${table.count} 张才能管` };
-    }
     if (!canBeat(rank, table.rank, mode)) {
       return { ok: false, error: `管不住 ${RANK_TEXT[table.rank]}` };
     }

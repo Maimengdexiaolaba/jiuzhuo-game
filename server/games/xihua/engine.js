@@ -147,7 +147,6 @@ function endRound(state, players) {
   }
   state.table = null;
   const lastSeat = activeSeats(state)[0];
-  const queue = [];
 
   if (lastSeat !== undefined && lastSeat >= 0) {
     const remaining = state.hands[lastSeat].length;
@@ -156,36 +155,18 @@ function endRound(state, players) {
       state.mergedRemaining = { seat: lastSeat, count: remaining };
       state.penaltyZone[lastSeat].push(...state.hands[lastSeat]);
       state.hands[lastSeat] = [];
-      if (remaining > 0) queue.push({ seat: lastSeat, cups: 0, reason: `剩余 ${remaining} 张并入惩罚区` });
     } else if (remaining > 0) {
       state.penalties[lastSeat] += remaining;
-      queue.push({ seat: lastSeat, cups: remaining, reason: `剩余 ${remaining} 张手牌，罚 ${remaining} 杯` });
     }
   }
 
   state.results = computeResults(state, players);
 
-  // B 方案：所有人按惩罚区折算，逐位进入罚酒确认
-  if (state.mode === MODE_B) {
-    for (const entry of state.results.entries) {
-      if (entry.cups > 0) {
-        queue.push({
-          seat: entry.seat,
-          cups: entry.cups,
-          reason: `惩罚区 ${entry.zoneCount} 张 → 罚 ${entry.cups} 杯`,
-        });
-      }
-    }
-  }
-
-  if (queue.length) {
-    state.penaltyQueue = queue;
-    state.penaltyCursor = 0;
-    state.penaltyAfter = PHASE.SETTLE;
-    state.phase = PHASE.PENALTY;
-  } else {
-    state.phase = PHASE.SETTLE;
-  }
+  // 结算后的罚杯不再逐人确认，直接进入本局统计（统计面板统一展示罚杯明细）
+  state.phase = PHASE.SETTLE;
+  state.penaltyQueue = [];
+  state.penaltyCursor = 0;
+  state.penaltyAfter = PHASE.SETTLE;
 
   emit(state, { type: 'settle', results: state.results });
 }
@@ -323,26 +304,29 @@ export const actions = {
 
     const rankName = RANK_TEXT[check.rank];
 
-    // 过牌：牌留在桌面展示（不改变要管的那手牌），轮到下家继续管
+    // 过牌：牌留在桌面展示（不改变要管的那手牌），轮到下家继续管；可多张甩出
     if (check.kind === 'pass') {
-      state.hands[actor.seat] = hand.filter((c) => c.id !== cards[0].id);
-      state.trickPile.push(cards[0]);
+      const removeIds = new Set(cards.map((c) => c.id));
+      state.hands[actor.seat] = hand.filter((c) => !removeIds.has(c.id));
+      state.trickPile.push(...cards);
       state.passed = [...state.passed, actor.seat];
-      emit(state, { type: 'passCard', seat: actor.seat, rank: check.rank });
+      emit(state, { type: 'passCard', seat: actor.seat, rank: check.rank, count: check.count });
       if (state.hands[actor.seat].length === 0) finishSeat(state, actor.seat, players);
       advanceTurn(state, actor.seat);
       return ok();
     }
 
-    // 白龙马（仅 B 方案）：牌进桌面牌堆，出牌权交给上家继续管
+    // 白龙马（仅 B 方案）：牌进桌面牌堆，出牌权交给上家继续管；可多张甩出
     if (check.kind === 'turnback') {
-      state.hands[actor.seat] = hand.filter((c) => c.id !== cards[0].id);
-      state.trickPile.push(cards[0]);
+      const removeIds = new Set(cards.map((c) => c.id));
+      state.hands[actor.seat] = hand.filter((c) => !removeIds.has(c.id));
+      state.trickPile.push(...cards);
       const prev = prevActiveSeat(state, actor.seat);
       emit(state, {
         type: 'turnback',
         seat: actor.seat,
         targetSeat: prev,
+        count: check.count,
         targetName: players.find((p) => p.seat === prev)?.name || '',
       });
       if (state.hands[actor.seat].length === 0) finishSeat(state, actor.seat, players);
@@ -433,15 +417,17 @@ export const actions = {
     advanceTurn(state, seat);
 
     if (state.results) {
-      // 这一过牌刚好结束本局，把本次罚酒排在队列最前
-      state.penaltyQueue = [entry, ...state.penaltyQueue];
+      // 这一过牌刚好结束本局：罚杯已计入结算，直接进入本局统计
+      state.penaltyQueue = [];
+      state.penaltyCursor = 0;
       state.penaltyAfter = PHASE.SETTLE;
+      state.phase = PHASE.SETTLE;
     } else {
       state.penaltyQueue = [entry];
       state.penaltyAfter = PHASE.PLAY;
+      state.penaltyCursor = 0;
+      state.phase = PHASE.PENALTY;
     }
-    state.penaltyCursor = 0;
-    state.phase = PHASE.PENALTY;
     return ok();
   },
 
@@ -517,12 +503,19 @@ export function legalPlays(state, seat) {
   const hand = state.hands[seat] || [];
   const table = state.table;
   const maxCount = maxPlayCount(state.mode);
+  const passCards = hand.filter((c) => isPassCard(c.rank));
+  const turnBackCards = hand.filter((c) => isTurnBackCard(c.rank, state.mode));
+  // 跟牌时，2/6 也必须出与桌面相同的张数；数量不足则不构成合法的功能牌出法
+  const passCount = table ? table.count : passCards.length;
+  const turnBackCount = table ? table.count : turnBackCards.length;
   const out = {
     lead: !table,
     need: table ? table.count : 0,
     plays: [],
-    passCard: hand.find((c) => isPassCard(c.rank)) || null,
-    turnBack: hand.find((c) => isTurnBackCard(c.rank, state.mode)) || null,
+    passCard: passCards.length >= passCount ? passCards[0] : null,
+    passCards: passCards.length >= passCount ? passCards.slice(0, passCount) : [],
+    turnBack: turnBackCards.length >= turnBackCount ? turnBackCards[0] : null,
+    turnBackCards: turnBackCards.length >= turnBackCount ? turnBackCards.slice(0, turnBackCount) : [],
   };
   if (!hand.length) return out;
 
@@ -559,17 +552,17 @@ function pickBotPlay(state, seat) {
     return { cardIds: [hand[0].id] };
   }
 
-  // 跟牌：手里有过牌时有一定概率直接过掉
+  // 跟牌：手里有过牌时有一定概率直接过掉（出与桌面相同张数）
   if (legal.passCard && Math.random() < 0.25) {
-    return { cardIds: [legal.passCard.id] };
+    return { cardIds: legal.passCards.map((c) => c.id) };
   }
   if (legal.plays.length) {
     const cheapest = legal.plays.slice().sort((a, b) => a.rank - b.rank)[0];
     return { cardIds: cheapest.cards.map((c) => c.id) };
   }
-  // 管不住：可用白龙马甩锅给上家
+  // 管不住：可用白龙马甩锅给上家（出与桌面相同张数）
   if (legal.turnBack && Math.random() < 0.3) {
-    return { cardIds: [legal.turnBack.id] };
+    return { cardIds: legal.turnBackCards.map((c) => c.id) };
   }
   return { pass: true };
 }
@@ -616,7 +609,9 @@ export function hintsFor(state, seat) {
       return acc;
     }, {}),
     hasPassCard: !!legal.passCard,
+    passCount: legal.passCards.length,
     hasTurnBack: !!legal.turnBack,
+    turnBackCount: legal.turnBackCards.length,
   };
 }
 

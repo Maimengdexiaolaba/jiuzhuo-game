@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   games_played  INTEGER NOT NULL DEFAULT 0,
   cups_won      INTEGER NOT NULL DEFAULT 0,
   cups_lost     INTEGER NOT NULL DEFAULT 0,
+  points        INTEGER NOT NULL DEFAULT 1000,
   created_at    INTEGER NOT NULL,
   last_login_at INTEGER
 );
@@ -52,6 +53,16 @@ CREATE TABLE IF NOT EXISTS match_records (
 
 CREATE INDEX IF NOT EXISTS idx_match_user_game ON match_records(user_id, game_id, id);
 `);
+
+// 数据库迁移：为已有数据库补 points 字段（积分商城）
+try {
+  const cols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name);
+  if (!cols.includes('points')) {
+    db.exec(`ALTER TABLE users ADD COLUMN points INTEGER NOT NULL DEFAULT 1000`);
+  }
+} catch (err) {
+  console.error('[db] 迁移 points 字段失败', err);
+}
 
 const now = () => Date.now();
 
@@ -85,6 +96,7 @@ function toUser(row) {
     gamesPlayed: row.games_played,
     cupsWon: row.cups_won,
     cupsLost: row.cups_lost,
+    points: row.points ?? 1000,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
     isGuest: false,
@@ -192,6 +204,24 @@ export const Users = {
     db.prepare('DELETE FROM match_records WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  },
+
+  /** 调整积分（delta 可为负，但不低于 0） */
+  addPoints(id, delta) {
+    const d = Math.round(Number(delta) || 0);
+    if (!d) return this.byId(id);
+    const cur = this.byId(id);
+    if (!cur) return null;
+    const next = Math.max(0, (cur.points ?? 1000) + d);
+    db.prepare('UPDATE users SET points = ? WHERE id = ?').run(next, id);
+    return this.byId(id);
+  },
+
+  /** 直接设置积分（管理员用） */
+  setPoints(id, value) {
+    const v = Math.max(0, Math.round(Number(value) || 0));
+    db.prepare('UPDATE users SET points = ? WHERE id = ?').run(v, id);
+    return this.byId(id);
   },
 
   touchLogin(id) {

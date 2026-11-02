@@ -399,7 +399,9 @@ export const actions = {
     state.summaryReady[actor.seat] = true;
     emit(state, { type: 'summaryReady', seat: actor.seat });
 
-    if (state.summaryReady.every(Boolean)) {
+    // 庄家（或任意玩家）关闭后即进入移庄，不再要求全员关闭，
+    // 避免有真人未点关闭或中途掉线导致整桌永久卡死。
+    if (actor.seat === state.dealerSeat || state.summaryReady.every(Boolean)) {
       state.phase = PHASE.DEALER_PICK;
       emit(state, { type: 'dealerPickPhase', dealerSeat: state.dealerSeat });
     }

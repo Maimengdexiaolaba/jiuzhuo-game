@@ -1,6 +1,7 @@
 /**
- * 扑克牌渲染（纸牌西游记）
- * 牌面直接使用美术出图：public/assets/xihua/cards/{花色}{点数}.jpg
+ * 扑克牌渲染（纸牌西游记 / 超级梦幻 共用）
+ * - 西游记：角色插画牌面 /assets/xihua/cards/*.jpg
+ * - 超级梦幻：点数牌面 /assets/supermeng/cards/*.svg（CC0）
  */
 
 const RANK_KEY = {
@@ -15,7 +16,10 @@ export const RANK_TEXT = {
 const SUIT_KEY = { s: 's', h: 'h', d: 'd', c: 'c' };
 const SUIT_TEXT = { s: '♠', h: '♥', d: '♦', c: '♣' };
 
-const ASSET = '/assets/xihua';
+const ASSETS = {
+  xihua: { dir: '/assets/xihua/cards', ext: 'jpg', back: '/assets/xihua/back.jpg' },
+  supermeng: { dir: '/assets/supermeng/cards', ext: 'svg', back: '/assets/xihua/back.jpg' },
+};
 
 export function cardFile(card) {
   if (card.rank === 16) return 'joker_b';
@@ -23,16 +27,17 @@ export function cardFile(card) {
   return `${SUIT_KEY[card.suit] || 's'}${RANK_KEY[card.rank] || card.rank}`;
 }
 
-export function cardSrc(card) {
-  return `${ASSET}/cards/${cardFile(card)}.jpg`;
+export function cardSrc(card, asset = 'xihua') {
+  const a = ASSETS[asset] || ASSETS.xihua;
+  return `${a.dir}/${cardFile(card)}.${a.ext}`;
 }
 
 /**
  * @param {{id:string,suit:string,rank:number}} card
- * @param {{size?:string, selected?:boolean, meta?:object, dim?:boolean, playable?:boolean, idx?:number, extraClass?:string}} opts
+ * @param {{size?:string, selected?:boolean, meta?:object, dim?:boolean, playable?:boolean, idx?:number, extraClass?:string, asset?:string, corner?:boolean}} opts
  */
 export function playCardHTML(card, opts = {}) {
-  const { size = 'md', selected = false, meta = null, dim = false, playable = false, idx = -1, extraClass = '', style = '' } = opts;
+  const { size = 'md', selected = false, meta = null, dim = false, playable = false, idx = -1, extraClass = '', style = '', asset = 'xihua', corner = true } = opts;
   const cls = ['pcard', `pcard--${size}`];
   if (selected) cls.push('is-selected');
   if (dim) cls.push('is-dim');
@@ -43,14 +48,27 @@ export function playCardHTML(card, opts = {}) {
   const label = `${SUIT_TEXT[card.suit] || ''}${RANK_TEXT[card.rank] || ''} ${meta?.name || ''}`.trim();
   const idxAttr = idx >= 0 ? ` data-idx="${idx}"` : '';
 
+  // 牌角角标：大号数字 + 花色，独立渲染保证可读（不依赖美术图内小字）
+  const isJoker = card.rank >= 15;
+  const isRed = card.suit === 'h' || card.suit === 'd';
+  const rankText = RANK_TEXT[card.rank] || '';
+  const suitText = SUIT_TEXT[card.suit] || '';
+  const cornerHTML = !corner ? '' : (isJoker
+    ? `<span class="pcard-corner joker">${rankText}</span>`
+    : `<span class="pcard-corner ${isRed ? 'red' : 'black'}">
+         <b>${rankText}</b><i>${suitText}</i>
+       </span>`);
+
   return `<div class="${cls.join(' ')}" data-rank="${card.rank}"${idxAttr} role="img" aria-label="${label}"${style ? ` style="${style}"` : ''}>
-    <img class="pcard-img" src="${cardSrc(card)}" alt="${label}" draggable="false" decoding="async" loading="eager" />
+    <img class="pcard-img" src="${cardSrc(card, asset)}" alt="${label}" draggable="false" decoding="async" loading="eager" />
+    ${cornerHTML}
   </div>`;
 }
 
-export function backCardHTML(size = 'sm', extraClass = '') {
+export function backCardHTML(size = 'sm', extraClass = '', asset = 'xihua') {
+  const a = ASSETS[asset] || ASSETS.xihua;
   return `<div class="pcard pcard--${size} pcard--back ${extraClass}">
-    <img class="pcard-img" src="${ASSET}/back.jpg" alt="牌背" draggable="false" />
+    <img class="pcard-img" src="${a.back}" alt="牌背" draggable="false" />
   </div>`;
 }
 

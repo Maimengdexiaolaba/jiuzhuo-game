@@ -82,7 +82,26 @@ export function mountAdmin(App) {
           <input type="checkbox" name="isAdmin" ${user?.isAdmin ? 'checked' : ''} />
           <span class="track"></span>
         </label>
-      </div>`;
+      </div>
+      ${!isNew ? `
+      <div class="config-row" style="margin-top:4px">
+        <div>
+          <div class="cr-label">积分</div>
+          <div class="cr-hint">当前 ${user.points ?? 1000} 积分</div>
+        </div>
+        <div class="admin-points">
+          <input name="points" type="number" min="0" value="${user.points ?? 1000}" style="width:100px" />
+          <button type="button" class="btn btn-ghost btn-sm" data-act="pointsAdd" data-delta="50">+50</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="pointsAdd" data-delta="-50">-50</button>
+        </div>
+      </div>
+      <div class="config-row" style="margin-top:4px">
+        <div>
+          <div class="cr-label">清除胜率</div>
+          <div class="cr-hint">清空该玩家所有游戏的百场胜率记录</div>
+        </div>
+        <button type="button" class="btn btn-danger btn-sm" data-act="clearStats">清除胜率</button>
+      </div>` : ''}`;
 
     const { el, close } = openModal({
       title: isNew ? '新建账号' : '编辑账号',
@@ -96,6 +115,35 @@ export function mountAdmin(App) {
     el.addEventListener('click', async (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'cancel') return close();
+
+      // 积分快捷调整
+      if (act === 'pointsAdd') {
+        const delta = Number(e.target.closest('[data-act]').dataset.delta);
+        const input = el.querySelector('[name=points]');
+        input.value = Math.max(0, (Number(input.value) || 0) + delta);
+        return;
+      }
+
+      // 清除胜率
+      if (act === 'clearStats') {
+        const ok = await confirmDialog({
+          title: '清除胜率',
+          message: `确定清空「${escapeHTML(user.username)}」所有游戏的百场胜率记录吗？`,
+          confirmText: '清除',
+          danger: true,
+        });
+        if (!ok) return;
+        const r = await App.call('admin:points', { userId: user.id, op: 'clearStats' });
+        if (r.error) return toast(r.error, 'error');
+        toast('已清除胜率', 'ok');
+        // 刷新列表，让战绩列更新
+        const list = await App.call('admin:list', {});
+        if (list.users) App.state.adminUsers = list.users;
+        close();
+        render(App);
+        return;
+      }
+
       if (act !== 'save') return;
 
       const payload = {
@@ -110,6 +158,14 @@ export function mountAdmin(App) {
         : await App.call('admin:update', { id: user.id, ...payload, isAdmin: payload.isAdmin });
 
       if (res.error) return toast(res.error, 'error');
+
+      // 保存积分（编辑已有账号时）
+      if (!isNew) {
+        const pointsInput = el.querySelector('[name=points]');
+        if (pointsInput) {
+          await App.call('admin:points', { userId: user.id, op: 'set', value: Number(pointsInput.value) || 0 });
+        }
+      }
 
       if (isNew) {
         const list = await App.call('admin:list', {});
@@ -136,17 +192,17 @@ function render(App) {
       const isSelf = me && u.id === me.id;
       return `
       <tr>
-        <td><strong>${escapeHTML(u.username)}</strong>${isSelf ? ' <span class="tag">你</span>' : ''}</td>
-        <td>${escapeHTML(u.displayName)}</td>
-        <td>${u.isAdmin ? '<span class="tag admin">管理员</span>' : '<span class="tag">成员</span>'}</td>
-        <td style="font-size:12px">
+        <td data-label="账号"><strong>${escapeHTML(u.username)}</strong>${isSelf ? ' <span class="tag">你</span>' : ''}</td>
+        <td data-label="昵称">${escapeHTML(u.displayName)}</td>
+        <td data-label="身份">${u.isAdmin ? '<span class="tag admin">管理员</span>' : '<span class="tag">成员</span>'}</td>
+        <td data-label="百场胜率" style="font-size:12px">
           ${(u.stats && u.stats.length)
             ? u.stats.map((s) => `<span class="stat-pill">${escapeHTML(s.gameName)} <b>${s.winRate}%</b> <i>${s.played} 场</i></span>`).join(' ')
             : '<span style="color:var(--muted)">暂无战绩</span>'}
         </td>
-        <td style="color:var(--muted);font-size:12px">${fmtTime(u.lastLoginAt)}</td>
-        <td>${u.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">正常</span>'}</td>
-        <td class="col-actions">
+        <td data-label="最近登录" style="color:var(--muted);font-size:12px">${fmtTime(u.lastLoginAt)}</td>
+        <td data-label="状态">${u.disabled ? '<span class="tag off">已停用</span>' : '<span class="tag on">正常</span>'}</td>
+        <td data-label="操作" class="col-actions">
           <div class="row-actions">
             <button class="btn btn-ghost btn-sm" data-act="edit" data-id="${u.id}">编辑</button>
             <button class="btn btn-ghost btn-sm" data-act="toggle" data-id="${u.id}" ${isSelf ? 'disabled' : ''}>

@@ -1,5 +1,7 @@
 import { toast, closeAllModals, escapeHTML } from './ui.js';
 import { openStatsModal } from './stats.js';
+import { openShopModal } from './shop.js';
+import { setAudioEnabled, setBgmMood, isBgmPlaying, getBgmMood } from './audio.js';
 import { mountAuth } from './auth.js';
 import { mountLobby } from './lobby.js';
 import { mountRoom } from './room.js';
@@ -47,6 +49,7 @@ const App = {
     view: 'auth',
     pendingRoom: localStorage.getItem(ROOM_KEY) || null,
     restored: false,
+    soundOn: localStorage.getItem('jz_sound') !== '0',
   },
   renderers: {},
   call(event, payload = {}) {
@@ -72,6 +75,8 @@ const App = {
       if (el) el.hidden = v !== name;
     });
     App.state.view = name;
+    // 背景音乐随场景切换：牌局用战斗版，其余用平静版
+    setBgmMood(name === 'room' ? 'room' : name === 'admin' ? null : 'lobby');
     // 牌桌视图锁成整屏，避免手机地址栏占用高度把手牌推出屏幕
     document.body.classList.toggle('in-room', name === 'room');
     App.renderTopbar();
@@ -114,7 +119,9 @@ function renderTopbar() {
 
   host.innerHTML = `
     ${user.isGuest ? '' : '<button class="btn btn-ghost btn-sm" id="btn-my-stats"><span class="lf">我的战绩</span><span class="ls">战绩</span></button>'}
+    ${user.isGuest ? '' : '<button class="btn btn-ghost btn-sm" id="btn-shop"><span class="lf">积分商城</span><span class="ls">商城</span></button>'}
     ${user.isAdmin ? '<button class="btn btn-ghost btn-sm" id="btn-goto-admin"><span class="lf">管理后台</span><span class="ls">后台</span></button>' : ''}
+    <button class="btn btn-ghost btn-sm" id="btn-sound" title="音效 / 背景音乐开关">${App.state.soundOn ? '🔊' : '🔇'}</button>
     <div class="user-chip">
       <span class="avatar">${escapeHTML((user.displayName || '客').slice(0, 1))}</span>
       <span>
@@ -127,6 +134,13 @@ function renderTopbar() {
   host.querySelector('#btn-logout')?.addEventListener('click', () => App.logout());
   host.querySelector('#btn-goto-admin')?.addEventListener('click', () => App.navigate('admin'));
   host.querySelector('#btn-my-stats')?.addEventListener('click', () => openStatsModal(App));
+  host.querySelector('#btn-shop')?.addEventListener('click', () => openShopModal(App));
+  host.querySelector('#btn-sound')?.addEventListener('click', () => {
+    App.state.soundOn = !App.state.soundOn;
+    localStorage.setItem('jz_sound', App.state.soundOn ? '1' : '0');
+    setAudioEnabled(App.state.soundOn);
+    App.renderTopbar();
+  });
 }
 
 /* ---------------- 首页游戏库 ---------------- */
@@ -290,6 +304,7 @@ mountAdmin(App);
 
 bindSocket();
 renderHeroGames();
+setAudioEnabled(App.state.soundOn);
 App.navigate('auth');
 
 // 若本地有登录态，等 restore 结果；无则展示登录页
@@ -298,4 +313,6 @@ if (!App.state.token) {
 }
 
 window.App = App;
+// 自检/调试用：BGM 状态与控制
+App.bgm = { set: setBgmMood, playing: isBgmPlaying, mood: getBgmMood };
 export default App;

@@ -92,9 +92,9 @@ const module = {
       label: '叫酒上限',
       default: 3,
       options: [
-        { value: 1, label: '最多 1 杯', desc: '只能叫 1 杯' },
         { value: 2, label: '最多 2 杯', desc: '可叫 1~2 杯' },
         { value: 3, label: '最多 3 杯', desc: '可叫 1~3 杯' },
+        { value: 'g2', label: '干 2', desc: '全场默认 2 杯，不再逐人押酒' },
       ],
     },
     {
@@ -135,7 +135,7 @@ const module = {
     cfg.ace23 = cfg.ace23 !== false;
     cfg.allowBlind = cfg.allowBlind === true;
     cfg.dealerChange = ['once', 'twice'].includes(cfg.dealerChange) ? cfg.dealerChange : 'none';
-    cfg.betMax = [1, 2, 3].includes(Number(cfg.betMax)) ? Number(cfg.betMax) : 3;
+    cfg.betMax = [2, 3].includes(Number(cfg.betMax)) ? Number(cfg.betMax) : (cfg.betMax === 'g2' ? 'g2' : 3);
     cfg.botFill = cfg.botFill !== false;
     return cfg;
   },
@@ -147,7 +147,7 @@ const module = {
     if (cfg.eatBomb235) parts.push('235吃炸弹');
     if (cfg.allowBlind) parts.push('可闷牌');
     parts.push(cfg.dealerChange === 'none' ? '庄家不换牌' : `庄家换${cfg.dealerChange === 'once' ? 1 : 2}手`);
-    parts.push(`叫酒≤${cfg.betMax}杯`);
+    parts.push(cfg.betMax === 'g2' ? '干2（全场2杯）' : `叫酒≤${cfg.betMax}杯`);
     if (cfg.botFill) parts.push('可加机器人');
     return parts;
   },
@@ -165,8 +165,10 @@ const module = {
       { title: '顺子/金花', body: '相邻或隔一张为顺子，同色为金花，同色且相邻/隔一为同花顺' },
       { title: 'A', body: c.ace23 ? 'A 可当 1 组成 A23，也可组成 QKA' : 'A 只能组成 QKA' },
       { title: '235', body: c.eatBomb235 ? '手牌 2、5 不同色可吃炸弹（不吃天炸），否则算单牌' : '235 无特殊，仅按单牌算' },
-      { title: '叫酒', body: `从庄家下家顺时针叫 1~${c.betMax} 杯；首家叫 2 或 3 杯时尾家可锁全场` },
-      { title: '开牌', body: c.dealerChange === 'none' ? '庄家至少开一家' : '庄家可开任意家，也可一家不开' },
+      { title: '叫酒', body: c.betMax === 'g2'
+        ? '干 2：全场默认 2 杯，跳过逐人叫酒'
+        : `从庄家下家顺时针叫 1~${c.betMax} 杯；首家叫 2 或 3 杯时尾家可锁全场` },
+      { title: '开牌', body: '庄家至少开一家' },
       { title: '换牌', body: c.dealerChange === 'none' ? '庄家不能换牌' : `庄家整个任期最多换${c.dealerChange === 'once' ? '1' : '2'}手，每次两张全换喝 1 杯` },
       { title: '闷牌', body: c.allowBlind ? '发牌前可声明闷牌；不服结算：闲家闷+庄家看牌时庄家输喝 4 倍' : '本局不允许闷牌' },
     ];

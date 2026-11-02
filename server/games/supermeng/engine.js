@@ -66,7 +66,7 @@ export function normalizeConfig(c) {
     eatBomb235: c0.eatBomb235 !== false,
     allowBlind: c0.allowBlind === true,
     dealerChange: c0.dealerChange === 'once' || c0.dealerChange === 'twice' ? c0.dealerChange : 'none',
-    betMax: [1, 2, 3].includes(Number(c0.betMax)) ? Number(c0.betMax) : 3,
+    betMax: c0.betMax === 'g2' ? 'g2' : ([2, 3].includes(Number(c0.betMax)) ? Number(c0.betMax) : 3),
     ace23: c0.ace23 !== false,
   };
 }
@@ -110,6 +110,7 @@ export function createState({ playerCount, config }) {
     dealerChangeUsed: 0,
     dealerChangeLimit: cfg.dealerChange === 'twice' ? 2 : cfg.dealerChange === 'once' ? 1 : 0,
     dealerSelfPenalty: 0,
+    dealerSawOwn: false, // 庄家是否已「看牌」（看自己牌）
     results: null,
     roundNo: 0,
     bigRound: 0,
@@ -137,6 +138,7 @@ function startRound(state) {
   state.openedCount = 0;
   state.opened = Array.from({ length: state.playerCount }, () => false);
   state.dealerSelfPenalty = 0;
+  state.dealerSawOwn = false;
   state.results = null;
   state.revealed = Array.from({ length: state.playerCount }, () => false);
   state.roundNo += 1;
@@ -177,6 +179,15 @@ function beginBet(state) {
     emit(state, { type: 'lockAuto', cups: state.locked.cups });
     return;
   }
+  // 干 2：全场默认 2 杯，跳过逐人叫酒
+  if (state.config.betMax === 'g2') {
+    for (const seat of order) state.bets[seat] = 2;
+    state.phase = PHASE.OPEN;
+    state.openSeat = null;
+    state.currentSeat = state.dealerSeat;
+    emit(state, { type: 'g2Auto', cups: 2 });
+    return;
+  }
   state.betCursor = 0;
   state.currentSeat = order[0];
 }
@@ -208,18 +219,22 @@ function endRound(state) {
     const dealerWin = cmp >= 0; // 平局庄家胜
     const bet = state.bets[seat];
     const blind = state.blind[seat];
-    const dealerBlind = state.blind[state.dealerSeat];
     const isFold = state.opened[seat] === 'fold';
 
     let seatCups = 0;
     let lostByDealer = 0;
     let outcome;
 
-    if (dealerWin) {
-      seatCups = isFold ? bet : bet * 2;
-      outcome = isFold ? 'fold' : 'lose';
+    if (isFold) {
+      // 服 = 认输，不与庄家比大小，闲家必输（喝所押酒），庄家不赔
+      seatCups = bet;
+      outcome = 'fold';
+    } else if (dealerWin) {
+      seatCups = bet * 2;
+      outcome = 'lose';
     } else {
-      const mult = blind && !dealerBlind ? 4 : 2;
+      // 闲家赢（庄家输）：闲家闷 + 庄家已看牌 → 庄家输 4 倍，否则 2 倍
+      const mult = blind && state.dealerSawOwn ? 4 : 2;
       lostByDealer = bet * mult;
       outcome = 'win';
     }
@@ -374,15 +389,28 @@ export const actions = {
   fight(state, players, actor) {
     if (state.phase !== PHASE.OPEN || state.openSeat !== actor.seat) return fail('当前不是你比牌');
     state.opened[actor.seat] = 'fight';
-    state.revealed[state.dealerSeat] = true;
-    state.revealed[actor.seat] = true;
     const d = evaluateHand(dealerHand(state)[0], dealerHand(state)[1], state.config);
     const h = evaluateHand(state.hands[actor.seat][0], state.hands[actor.seat][1], state.config);
     const cmp = compareHands(d, h, state.config);
-    emit(state, { type: 'fight', seat: actor.seat, dealerWin: cmp >= 0, dealerHand: d, seatHand: h });
+    // 只比牌、不亮牌：仅广播输赢结果，具体牌面留到统计面板统一展示
+    emit(state, {
+      type: 'fight',
+      seat: actor.seat,
+      dealerWin: cmp >= 0,
+      seatName: players.find((p) => p.seat === actor.seat)?.name || '',
+    });
     state.openSeat = null;
     state.openedCount += 1;
     state.currentSeat = state.dealerSeat;
+    return ok();
+  },
+
+  /** 庄家看牌：闷牌的庄家可中途看自己的牌（看牌后开闷牌闲家翻倍） */
+  peek(state, players, actor) {
+    if (actor.seat !== state.dealerSeat) return fail('只有庄家能看牌');
+    if (state.dealerSawOwn) return fail('你已经看过牌了');
+    state.dealerSawOwn = true;
+    emit(state, { type: 'peek', seat: actor.seat });
     return ok();
   },
 
@@ -390,8 +418,8 @@ export const actions = {
     if (state.phase !== PHASE.OPEN) return fail('当前不能结束开牌');
     if (actor.seat !== state.dealerSeat) return fail('只有庄家能操作');
     if (state.openSeat !== null) return fail('等待该闲家回应');
-    if (state.config.dealerChange === 'none' && state.openedCount < 1) {
-      return fail('不换牌模式至少开一家');
+    if (state.openedCount < 1) {
+      return fail('庄家至少开一家');
     }
     endRound(state);
     return ok();
@@ -446,7 +474,8 @@ export const actions = {
   closeSummary(state, players, actor) {
     if (state.phase !== PHASE.BIG_END) return fail('当前无需关闭');
     state.summaryReady[actor.seat] = true;
-    if (state.summaryReady.every((v) => v)) {
+    // 庄家关闭后即进入移庄，不再要求全员关闭，避免真人掉线导致卡死
+    if (actor.seat === state.dealerSeat || state.summaryReady.every((v) => v)) {
       state.phase = PHASE.DEALER_PICK;
       state.currentSeat = state.dealerSeat;
     }
@@ -543,6 +572,27 @@ export function pendingBotActions(state, isBot) {
     }
   } else if (state.phase === PHASE.SETTLE) {
     if (isBot(state.dealerSeat)) jobs.push({ seat: state.dealerSeat, type: 'nextRound', payload: {} });
+  } else if (state.phase === PHASE.BIG_END) {
+    // 本庄统计：机器人自动关闭，庄家机器人直接推进到移庄
+    if (isBot(state.dealerSeat)) {
+      jobs.push({ seat: state.dealerSeat, type: 'closeSummary', payload: {} });
+    } else {
+      for (let s = 0; s < state.playerCount; s += 1) {
+        if (isBot(s) && !state.summaryReady[s]) jobs.push({ seat: s, type: 'closeSummary', payload: {} });
+      }
+    }
+  } else if (state.phase === PHASE.DEALER_PICK) {
+    // 移庄：庄家机器人连庄或随机选新庄家，然后直接开新大回合
+    if (isBot(state.dealerSeat) && state.newDealerSeat === null) {
+      const stay = Math.random() < 0.4;
+      const others = [];
+      for (let s = 0; s < state.playerCount; s += 1) if (s !== state.dealerSeat) others.push(s);
+      const target = stay ? state.dealerSeat : others[Math.floor(Math.random() * others.length)];
+      jobs.push({ seat: state.dealerSeat, type: 'pickDealer', payload: { seat: target } });
+    }
+    if (isBot(state.newDealerSeat)) {
+      jobs.push({ seat: state.newDealerSeat, type: 'startBigRound', payload: {} });
+    }
   }
   return jobs;
 }
@@ -568,12 +618,15 @@ export function serialize(state) {
     openSeat: state.openSeat,
     opened: state.opened,
     openedCount: state.openedCount,
-    canStop: state.config.dealerChange !== 'none' || state.openedCount >= 1,
+    canStop: state.openedCount >= 1,
     dealerChangeUsed: state.dealerChangeUsed,
     dealerChangeLimit: state.dealerChangeLimit,
     dealerChangeLeft: Math.max(0, state.dealerChangeLimit - state.dealerChangeUsed),
+    dealerSawOwn: state.dealerSawOwn,
+    revealed: state.revealed.slice(),
     results: state.results,
     bigStats: state.bigStats,
+    history: state.history,
     newDealerSeat: state.newDealerSeat,
     lastEvent: state.lastEvent,
   };

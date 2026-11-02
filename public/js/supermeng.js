@@ -1,5 +1,6 @@
 import { escapeHTML, initials, openModal, closeAllModals, toast } from './ui.js';
 import { playCardHTML, backCardHTML } from './playcards.js';
+import { sfx, speak } from './audio.js';
 
 const PHASE_TEXT = {
   blind: '闷牌声明', dealer_change: '庄家换牌', bet: '叫酒', open: '开牌',
@@ -10,17 +11,50 @@ let modalKey = null;
 let dismissed = false;
 let lastRound = null;
 let pickSeat = null;
+let lastSeq = 0;
 
 export function resetSupermengView() {
   modalKey = null;
   dismissed = false;
   lastRound = null;
   pickSeat = null;
+  lastSeq = 0;
 }
 
 const nameOf = (room, seat) => room.players.find((p) => p.seat === seat)?.name || `座位${seat}`;
 
 const cupUnit = (n) => `${n} 杯`;
+
+/** 超级梦幻事件音效与播报 */
+function handleSupermengEvents(g) {
+  const ev = g?.lastEvent;
+  if (!ev) return;
+  if (!lastSeq) { lastSeq = ev.seq; return; }
+  if (ev.seq <= lastSeq) return;
+  lastSeq = ev.seq;
+
+  if (ev.type === 'blind') {
+    if (ev.blind) speak(['sm_blind']);
+    else sfx.click();
+  } else if (ev.type === 'bet') {
+    speak(['sm_bet']);
+  } else if (ev.type === 'lock') {
+    sfx.yourTurn();
+    speak(['sm_lock']);
+  } else if (ev.type === 'openRequest') {
+    sfx.click();
+  } else if (ev.type === 'fold') {
+    speak(['sm_fold']);
+  } else if (ev.type === 'fight') {
+    speak(['sm_fight']);
+    // 比牌结果播报
+    setTimeout(() => speak([ev.dealerWin ? 'sm_dealer_win' : 'sm_dealer_lose']), 900);
+  } else if (ev.type === 'changeCards') {
+    sfx.shuffle();
+  } else if (ev.type === 'settle') {
+    sfx.win();
+  }
+}
 
 /* ---------------- 主牌桌 ---------------- */
 
@@ -29,6 +63,9 @@ export function supermengTableHTML(App, room) {
   const me = room.mySeat;
   const meta = g.meta || {};
   const myHand = room.myHand || [];
+  const isSpectator = !!room.isSpectator;
+
+  handleSupermengEvents(g);
 
   return `
   <div class="felt felt-xihua felt-supermeng">
@@ -36,20 +73,25 @@ export function supermengTableHTML(App, room) {
     <div class="xh-center">
       ${smCenter(room, g, meta)}
     </div>
-    <div class="xh-me">
+    ${isSpectator
+      ? '<div class="spectator-bar"><i class="pulse"></i>观 战 中 · 仅可见公共牌面</div>'
+      : `<div class="xh-me">
       <div class="xh-my-bar">
         <span class="xh-my-title">我的手牌</span>
+        <span class="xh-deck-tag">牌堆 <b>${g.deckLeft ?? 0}</b> / ${g.totalDeck ?? 0}</span>
         ${g.phase === 'bet' ? `<span class="xh-zone-tag">本轮 ${g.bets[me] ? `叫 <b>${g.bets[me]}</b> 杯` : '待叫酒'}</span>` : ''}
         ${g.locked ? `<span class="xh-zone-tag" style="color:#e8a67a">锁酒 <b>${g.locked.cups}</b> 杯</span>` : ''}
       </div>
       <div class="xh-hand">
         ${myHand.length
-          ? myHand.map((c) => playCardHTML(c, { size: 'lg', meta: meta[c.rank] })).join('')
-          : '<span class="xh-empty-hand">等待发牌</span>'}
+          ? myHand.map((c) => playCardHTML(c, { size: 'lg', meta: meta[c.rank], asset: 'supermeng' })).join('')
+          : (me != null && g.handCounts?.[me] > 0
+            ? Array.from({ length: g.handCounts[me] }, () => backCardHTML('lg', '', 'supermeng')).join('')
+            : '<span class="xh-empty-hand">等待发牌</span>')}
         ${room.myHandInfo ? `<span class="sm-handinfo">${escapeHTML(room.myHandInfo.name)}</span>` : ''}
       </div>
       <div class="xh-actions">${smActions(room, g)}</div>
-    </div>
+    </div>`}
   </div>`;
 }
 
@@ -80,8 +122,8 @@ function smSeats(room, g) {
           </div>
           <div class="xh-mini-hand">
             ${hand && hand.length
-              ? hand.map((c) => playCardHTML(c, { size: 'xs', meta: g.meta?.[c.rank] })).join('')
-              : Array.from({ length: Math.min(p.handCount ?? 2, 2) }, () => backCardHTML('xs')).join('')}
+              ? hand.map((c) => playCardHTML(c, { size: 'xs', meta: g.meta?.[c.rank], asset: 'supermeng' })).join('')
+              : Array.from({ length: Math.min(p.handCount ?? 2, 2) }, () => backCardHTML('xs', '', 'supermeng')).join('')}
             ${info && (g.phase === 'settle' || g.phase === 'big_end') ? `<span class="sm-info">${escapeHTML(info.name)}</span>` : ''}
           </div>
         </div>`;
@@ -94,25 +136,18 @@ function smCenter(room, g, meta) {
   const phase = g.phase;
   const status = smStatus(room, g);
 
-  const revealCards = (seat, label) => {
-    const p = room.players.find((x) => x.seat === seat);
-    if (!p || !p.hand || !p.hand.length) return '';
-    return `
-      <div class="sm-reveal">
-        <div class="sm-reveal-name">${label} ${escapeHTML(p.name)}</div>
-        <div class="sm-reveal-cards">${p.hand.map((c) => playCardHTML(c, { size: 'lg', meta: meta[c.rank] })).join('')}</div>
-        ${p.handInfo ? `<span class="hand-tag sm-handtag">${escapeHTML(p.handInfo.name)}</span>` : ''}
-      </div>`;
-  };
-
   let body = '';
   if (phase === 'open' && g.lastEvent?.type === 'fight') {
+    // 比牌只显示输赢结果，不亮牌（牌面留到统计面板）
+    const seatName = g.lastEvent.seatName || nameOf(room, g.lastEvent.seat);
     body = `<div class="sm-fight">
-      ${revealCards(g.dealerSeat, '庄家')}
-      <span class="sm-vs">VS</span>
-      ${revealCards(g.lastEvent.seat, '闲家')}
       <div class="sm-fight-result ${g.lastEvent.dealerWin ? 'win' : 'lose'}">
         ${g.lastEvent.dealerWin ? '庄家胜' : '庄家负'}
+      </div>
+      <div class="sm-fight-sub">
+        ${g.lastEvent.dealerWin
+          ? `闲家 ${escapeHTML(seatName)} 不服落败`
+          : `闲家 ${escapeHTML(seatName)} 不服胜出`}
       </div>
     </div>`;
   } else {
@@ -197,12 +232,14 @@ function smActions(room, g) {
     }
     if (g.currentSeat !== me) return `<span class="wait-note"><i class="spinner"></i>等待庄家开牌</span>`;
     const cands = room.players.filter((p) => p.seat !== g.dealerSeat && !g.opened?.[p.seat]);
+    const canPeek = g.blind?.[me] && !g.dealerSawOwn;
     return `
+      ${canPeek ? `<div class="action-row"><button class="btn btn-ghost" data-act="peek">看 牌（看自己的牌）</button></div>` : ''}
       <div class="action-row">
         ${cands.map((p) => `<button class="btn btn-ghost btn-sm" data-act="open" data-seat="${p.seat}">开 ${escapeHTML(p.name)}（叫 ${g.bets?.[p.seat] || 0} 杯）</button>`).join('')}
       </div>
       ${g.canStop ? `<div class="action-row"><button class="btn btn-primary" data-act="stopOpen">结束开牌</button></div>` : ''}
-      <div class="action-tip">${g.config.dealerChange === 'none' ? '不换牌模式至少开一家' : '可一家不开，直接结束开牌'}</div>`;
+      <div class="action-tip">庄家至少开一家，也可继续开其他闲家</div>`;
   }
 
   if (phase === 'settle') {
@@ -212,7 +249,17 @@ function smActions(room, g) {
       <button class="btn btn-ghost" data-act="smSettle">本局结算</button>`;
   }
 
-  if (phase === 'big_end' || phase === 'dealer_pick') {
+  if (phase === 'big_end') {
+    // 本庄统计：庄家点「关闭统计」进入移庄；闲家可看统计
+    const isDealer = g.dealerSeat === me;
+    return `
+      <button class="btn btn-ghost" data-act="smBigStats">本庄统计</button>
+      ${isDealer
+        ? `<button class="btn btn-primary" data-act="closeSummary">关闭统计 · 进入移庄</button>`
+        : '<div class="action-tip">等待庄家关闭统计进入移庄</div>'}`;
+  }
+
+  if (phase === 'dealer_pick') {
     const target = g.newDealerSeat;
     return `
       <button class="btn btn-ghost" data-act="smBigStats">本庄统计</button>
@@ -223,7 +270,9 @@ function smActions(room, g) {
                <button class="btn btn-ghost" data-act="smConfig">重设规则（可选）</button>
                <button class="btn btn-primary" data-act="smStartBig">沿用原规则 · 开局</button>
              </div>`
-          : ''}`;
+          : target !== null
+            ? `<div class="action-tip">等待新庄家 ${escapeHTML(nameOf(room, target))} 确认</div>`
+            : '<div class="action-tip">等待庄家选择新庄家</div>'}`;
   }
 
   return '';
@@ -262,7 +311,7 @@ function openSettleModal(App, room, g) {
     return `
       <tr class="${r.outcome === 'win' ? 'is-win' : ''}">
         <td data-label="闲家"><span class="st-name">${blind}${escapeHTML(nameOf(room, r.seat))}</span></td>
-        <td data-label="手牌"><span class="st-hand">${r.hand.map((c) => playCardHTML(c, { size: 'xs', meta: meta[c.rank] })).join('')}</span></td>
+        <td data-label="手牌"><span class="st-hand">${r.hand.map((c) => playCardHTML(c, { size: 'xs', meta: meta[c.rank], asset: 'supermeng' })).join('')}</span></td>
         <td data-label="牌型"><span class="hand-tag">${escapeHTML(r.handName)}</span></td>
         <td data-label="押酒">${r.bet} 杯</td>
         <td data-label="结果" class="${oc}">${outcomeText}</td>
@@ -334,6 +383,61 @@ export function reopenSupermengSettle(App, room) {
   const g = room.game;
   if (g.phase === 'settle') openSettleModal(App, room, g);
   else if (g.phase === 'big_end') openBigEndModal(App, room, g);
+}
+
+/* ---------------- 历史回放 ---------------- */
+
+export function openSupermengHistory(App, room) {
+  const g = room.game;
+  const history = g.history || [];
+  const meta = g.meta || {};
+
+  const body = history.length
+    ? `<div class="hist-list">
+        ${history.slice().reverse().map((h) => {
+          const res = h.results;
+          const d = res.dealer;
+          const rows = res.rows.map((r) => {
+            const blind = r.blind ? '<span class="pod-badge sm-blind">闷</span>' : '';
+            const outcomeText = r.outcome === 'fold' ? '服' : r.outcome === 'win' ? '赢庄' : '输庄';
+            return `
+              <tr>
+                <td><span class="st-name">${blind}${escapeHTML(nameOf(room, r.seat))}</span></td>
+                <td><span class="st-hand">${r.hand.map((c) => playCardHTML(c, { size: 'xs', meta: meta[c.rank], asset: 'supermeng' })).join('')}</span></td>
+                <td><span class="hand-tag">${escapeHTML(r.handName)}</span></td>
+                <td>${r.bet} 杯</td>
+                <td class="${r.outcome === 'win' ? 'num-win' : 'num-lose'}">${outcomeText}</td>
+                <td class="num-lose">${r.seatCups || 0} 杯</td>
+              </tr>`;
+          }).join('');
+          return `
+          <details class="hist-round">
+            <summary>
+              <span class="hr-no">第 ${h.roundNo} 局</span>
+              <span class="hr-meta">庄家 ${escapeHTML(nameOf(room, h.dealerSeat))}</span>
+              <span class="hr-score">庄 胜 <b class="num-win">${d.won}</b> · 负 <b class="num-lose">${d.lost}</b></span>
+            </summary>
+            <div class="hr-body">
+              <div class="table-scroll">
+                <table class="settle-table">
+                  <thead><tr><th>闲家</th><th>手牌</th><th>牌型</th><th>押酒</th><th>结果</th><th>喝杯</th></tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>
+          </details>`;
+        }).join('')}
+      </div>
+      <div class="rule-line" style="color:var(--muted);font-size:12px"><span>仅回放本庄已完成的 ${history.length} 局，移庄后清空。</span></div>`
+    : '<div class="empty-state" style="margin:0;padding:44px 20px"><p>还没有可回放的牌局</p></div>';
+
+  openModal({
+    title: '历史回放',
+    subtitle: `第 ${g.bigRound} 庄 · 已完成 ${history.length} 局`,
+    body,
+    size: 'modal-xl',
+    footer: '<button class="btn btn-ghost" data-close>关闭</button>',
+  });
 }
 
 /* ---------------- 移庄重设规则 ---------------- */

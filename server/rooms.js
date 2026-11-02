@@ -31,6 +31,7 @@ export class Room {
     this.config = this.game.normalizeConfig(config);
     this.hostId = host.id;
     this.players = [];
+    this.spectators = []; // 观战者（不占座位）
     this.state = null;
     this.createdAt = Date.now();
     this.lastActivity = Date.now();
@@ -88,6 +89,37 @@ export class Room {
     this.players.push(player);
     if (!silent) this.touch();
     return { ok: true, player };
+  }
+
+  /* ---------------- 观战 ---------------- */
+
+  findSpectator(id) {
+    return this.spectators.find((s) => s.id === id) || null;
+  }
+
+  addSpectator(user) {
+    if (this.findPlayer(user.id)) return { error: '你已在牌局中' };
+    const existing = this.findSpectator(user.id);
+    if (existing) {
+      existing.connected = true;
+      return { ok: true, spectator: existing };
+    }
+    const spectator = {
+      id: user.id,
+      name: user.displayName || user.username || '观众',
+      isAdmin: !!user.isAdmin,
+      connected: true,
+      socketId: null,
+    };
+    this.spectators.push(spectator);
+    return { ok: true, spectator };
+  }
+
+  removeSpectator(playerId) {
+    const idx = this.spectators.findIndex((s) => s.id === playerId);
+    if (idx === -1) return { error: '不在观战' };
+    this.spectators.splice(idx, 1);
+    return { ok: true };
   }
 
   removePlayer(playerId) {
@@ -401,16 +433,31 @@ export class Room {
     });
   }
 
-  /** 玩家视角的公开信息，手牌严格按可见性脱敏 */
-  serializeFor(viewerId) {
+  /** 玩家/观战者视角的公开信息，手牌严格按可见性脱敏 */
+  serializeFor(viewerId, isSpectator = false) {
     const viewer = this.findPlayer(viewerId);
+    const spec = isSpectator ? this.findSpectator(viewerId) : null;
+    const isAdminSpec = !!spec?.isAdmin; // 管理员观战 = 上帝视角
     const viewerSeat = viewer ? viewer.seat : -1;
     const gs = this.state ? this.game.serialize(this.state) : null;
     const PHASE = this.game.PHASE;
 
     const revealAtEnd = this.game.revealHandsAtEnd !== false;
+    const isSupermeng = this.gameId === 'supermeng';
     const handsVisible = (seat) => {
       if (!this.state) return false;
+      // 管理员观战：上帝视角，可见所有手牌
+      if (isSpectator && isAdminSpec) return true;
+      // 普通观战者：只看公共信息，任何手牌不可见
+      if (isSpectator) return false;
+      // 超级梦幻：闷牌玩家看不到自己的牌（庄家看牌后除外）
+      if (isSupermeng && seat === viewerSeat) {
+        if (this.state.blind && this.state.blind[seat]) {
+          if (seat === this.state.dealerSeat && this.state.dealerSawOwn) return true;
+          return false;
+        }
+        return true;
+      }
       if (seat === viewerSeat) return true;
       if (this.state.revealed && this.state.revealed[seat]) return true;
       if (!revealAtEnd) return false;
@@ -447,7 +494,9 @@ export class Room {
       };
     });
 
-    const myHand = this.state && viewerSeat >= 0 ? this.state.hands[viewerSeat] || [] : [];
+    const myHand = (this.state && viewerSeat >= 0 && handsVisible(viewerSeat))
+      ? this.state.hands[viewerSeat] || []
+      : [];
 
     return {
       id: this.id,
@@ -460,11 +509,13 @@ export class Room {
       capacity: this.capacity,
       status: this.status,
       isHost: viewerId === this.hostId,
+      isSpectator,
       mySeat: viewerSeat,
       myHand,
       myHandInfo: myHand.length === 2 ? evalHand(myHand) : null,
-      hints: (this.state && this.game.hintsFor) ? this.game.hintsFor(this.state, viewerSeat) : null,
+      hints: (this.state && this.game.hintsFor && !isSpectator) ? this.game.hintsFor(this.state, viewerSeat) : null,
       players,
+      spectators: this.spectators.map((s) => ({ id: s.id, name: s.name, isAdmin: s.isAdmin })),
       canStart: this.canStart(),
       notice: this.pendingNotice || null,
       game: gs,

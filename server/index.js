@@ -90,6 +90,13 @@ function broadcastRoom(room) {
       sock.emit('room:state', room.serializeFor(p.id));
     }
   }
+  for (const s of room.spectators) {
+    if (!s.socketId) continue;
+    const sock = io.sockets.sockets.get(s.socketId);
+    if (sock) {
+      sock.emit('room:state', room.serializeFor(s.id, true));
+    }
+  }
   if (room.pendingNotice) {
     for (const p of room.players) {
       if (p.isBot || !p.socketId) continue;
@@ -111,10 +118,15 @@ function leaveCurrentRoom(socket) {
   const room = currentRoomOf(socket);
   if (!room || !socket.data.user) return;
   const user = socket.data.user;
-  room.removePlayer(user.id);
+  const wasSpectator = !!room.findSpectator(user.id);
+  if (wasSpectator) {
+    room.removeSpectator(user.id);
+  } else {
+    room.removePlayer(user.id);
+  }
   socket.data.roomId = null;
   socket.leave(`room:${room.id}`);
-  if (room.players.length) {
+  if (room.players.length || room.spectators.length) {
     broadcastRoom(room);
     rooms.notifyList();
   }
@@ -324,6 +336,67 @@ io.on('connection', (socket) => {
     ack?.({ ok: true, stats, window: 100 });
   });
 
+  /* ---------------- 积分商城 ---------------- */
+
+  // 商城商品清单（首期仅胜率清零卡，后续可扩展牌背/主题/皮肤等）
+  const SHOP_ITEMS = [
+    {
+      id: 'clear_stats',
+      name: '胜率清零卡',
+      price: 50,
+      desc: '清空你的百场胜率记录（所有游戏）',
+      kind: 'clearStats',
+    },
+  ];
+
+  socket.on('shop:list', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    if (user.isGuest) return ack?.({ ok: true, guest: true, points: 0, items: [] });
+    const u = Users.byId(user.id) || user;
+    ack?.({ ok: true, points: u.points ?? 1000, items: SHOP_ITEMS });
+  });
+
+  socket.on('shop:buy', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    if (user.isGuest) return ack?.({ error: '游客无法使用商城，请注册登录' });
+    const item = SHOP_ITEMS.find((i) => i.id === payload?.itemId);
+    if (!item) return ack?.({ error: '商品不存在' });
+    const u = Users.byId(user.id);
+    if (!u) return ack?.({ error: '账号不存在' });
+    if ((u.points ?? 1000) < item.price) return ack?.({ error: '积分不足' });
+
+    // 扣积分
+    Users.addPoints(user.id, -item.price);
+
+    // 执行商品效果
+    if (item.kind === 'clearStats') {
+      Matches.clearFor(user.id);
+    }
+
+    const fresh = Users.byId(user.id);
+    ack?.({ ok: true, points: fresh.points ?? 0, item });
+  });
+
+  // 管理员：调整玩家积分 / 清除胜率
+  socket.on('admin:points', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user || !user.isAdmin) return ack?.({ error: '仅管理员可操作' });
+    const targetId = String(payload?.userId || '');
+    const op = payload?.op; // set | add | clearStats
+    if (!targetId) return ack?.({ error: '缺少目标账号' });
+    if (op === 'clearStats') {
+      Matches.clearFor(targetId);
+      return ack?.({ ok: true });
+    }
+    const val = Number(payload?.value);
+    if (!Number.isFinite(val)) return ack?.({ error: '数值无效' });
+    if (op === 'set') Users.setPoints(targetId, val);
+    else Users.addPoints(targetId, val);
+    ack?.({ ok: true, user: Users.byId(targetId) });
+  });
+
   /* ---------------- 大厅 / 房间 ---------------- */
 
   socket.on('lobby:list', (payload, ack) => {
@@ -388,6 +461,26 @@ io.on('connection', (socket) => {
       leaveCurrentRoom(sock);
       rooms.notifyList();
       return { ok: true };
+    })
+  );
+
+  socket.on(
+    'room:spectate',
+    withUser((payload, user, sock) => {
+      const room = rooms.get(payload.roomId);
+      if (!room) return { error: '房间不存在或已解散' };
+      if (!room.state) return { error: '房间尚未开局，可直接加入' };
+
+      leaveCurrentRoom(sock);
+      const res = room.addSpectator(user);
+      if (res.error) return { error: res.error };
+      res.spectator.socketId = sock.id;
+      sock.data.roomId = room.id;
+      sock.data.isSpectator = true;
+      sock.join(`room:${room.id}`);
+      broadcastRoom(room);
+      rooms.notifyList();
+      return { ok: true, roomId: room.id };
     })
   );
 
@@ -597,25 +690,34 @@ io.on('connection', (socket) => {
 
     const room = currentRoomOf(socket);
     if (room) {
-      const player = room.findPlayer(user.id);
-      if (player) {
-        player.socketId = null;
-        room.setConnected(user.id, false);
+      const spectator = room.findSpectator(user.id);
+      if (spectator) {
+        // 观战者断开：直接移除
+        room.removeSpectator(user.id);
+        socket.data.roomId = null;
         broadcastRoom(room);
         rooms.notifyList();
-        setTimeout(() => {
-          const stillRoom = rooms.get(room.id);
-          if (!stillRoom) return;
-          const p = stillRoom.findPlayer(user.id);
-          if (!p || p.connected) return;
-          if (!stillRoom.state) {
-            stillRoom.removePlayer(user.id);
-            if (stillRoom.players.length) {
-              broadcastRoom(stillRoom);
-              rooms.notifyList();
+      } else {
+        const player = room.findPlayer(user.id);
+        if (player) {
+          player.socketId = null;
+          room.setConnected(user.id, false);
+          broadcastRoom(room);
+          rooms.notifyList();
+          setTimeout(() => {
+            const stillRoom = rooms.get(room.id);
+            if (!stillRoom) return;
+            const p = stillRoom.findPlayer(user.id);
+            if (!p || p.connected) return;
+            if (!stillRoom.state) {
+              stillRoom.removePlayer(user.id);
+              if (stillRoom.players.length) {
+                broadcastRoom(stillRoom);
+                rooms.notifyList();
+              }
             }
-          }
-        }, 45000);
+          }, 45000);
+        }
       }
     }
 
