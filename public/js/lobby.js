@@ -36,19 +36,27 @@ function render(App) {
   const rooms = App.state.rooms || [];
   const user = App.state.user;
 
-  // 游戏条
+  // 游戏条（排期中的玩法也展示，但标灰不可开桌）
   const strip = document.getElementById('game-strip');
   strip.innerHTML = games
-    .map(
-      (g) => `
-      <div class="game-pill is-on">
-        <span class="gp-icon">${escapeHTML(g.name.slice(0, 1))}</span>
-        <span>
-          <span class="gp-name">${escapeHTML(g.name)}</span>
-          <span class="gp-tag">${escapeHTML(g.tagline)} · ${g.minPlayers}~${g.maxPlayers} 人</span>
-        </span>
-      </div>`
-    )
+    .map((g) => (
+      g.enabled === false
+        ? `<div class="game-pill is-soon">
+            <span class="gp-icon">${escapeHTML(g.name.slice(0, 1))}</span>
+            <span>
+              <span class="gp-name">${escapeHTML(g.name)}</span>
+              <span class="gp-tag">排期开发中 · ${g.minPlayers}~${g.maxPlayers} 人</span>
+            </span>
+            <span class="gp-lock">敬请期待</span>
+          </div>`
+        : `<div class="game-pill is-on">
+            <span class="gp-icon">${escapeHTML(g.name.slice(0, 1))}</span>
+            <span>
+              <span class="gp-name">${escapeHTML(g.name)}</span>
+              <span class="gp-tag">${escapeHTML(g.tagline)} · ${g.minPlayers}~${g.maxPlayers} 人</span>
+            </span>
+          </div>`
+    ))
     .join('');
 
   // 房间列表
@@ -124,7 +132,9 @@ function openCreateModal(App) {
     }
   };
 
+  // 排期中的玩法（enabled === false）不能开桌，创建弹窗里不列
   const gameListHTML = games
+    .filter((g) => g.enabled !== false)
     .map(
       (g) => `
       <div class="game-choice-item" data-game="${escapeHTML(g.id)}">
@@ -215,12 +225,8 @@ function openCreateModal(App) {
       })
       .join('');
 
-    // 按当前配置挑选对应的规则说明（支持按选项切换）
-    let rules = game.rules || [];
-    for (const v of game.rulesVariants || []) {
-      const hit = Object.entries(v.match || {}).every(([k, val]) => String(values[k]) === String(val));
-      if (hit) { rules = v.rules; break; }
-    }
+    // 固定展示通用完整规则（不随配置切换），可开启/关闭的选项在文案中括注
+    const rules = game.rules || [];
 
     rulesBox.innerHTML = `
       <span class="rb-title">牌型规则</span>

@@ -214,7 +214,7 @@ test('完整一局流程必须全部手动推进', () => {
   assert.ok(!engine.applyAction(st, players, 1, 'shuffle').ok);
   assert.ok(engine.applyAction(st, players, 0, 'shuffle').ok);
   assert.strictEqual(st.phase, 'cut_dice');
-  assert.strictEqual(st.wall.length, 40);
+  assert.strictEqual(st.wallTop.length + st.wallBot.length, 40);
 
   assert.ok(engine.applyAction(st, players, 0, 'rollCutDice').ok);
   assert.ok(['cut_choice', 'bet'].includes(st.phase), '切牌阶段应跳转到 bet 或 cut_choice');
@@ -236,7 +236,7 @@ test('完整一局流程必须全部手动推进', () => {
 
   assert.ok(engine.applyAction(st, players, 0, 'rollDealDice').ok);
   assert.strictEqual(st.phase, 'reveal_dealer');
-  assert.strictEqual(st.wall.length, 40 - 8);
+  assert.strictEqual(st.wallTop.length + st.wallBot.length, 40 - 8);
   st.hands.forEach((h) => assert.strictEqual(h.length, 2));
 
   // 未到阶段不能提前亮牌
@@ -285,7 +285,7 @@ test('牌墙摸完进入大回合结算，并支持移庄', () => {
 
   assert.strictEqual(st.phase, 'big_end', '4人局 40 张牌应恰好打 5 局');
   assert.strictEqual(st.history.length, 5);
-  assert.strictEqual(st.wall.length, 0);
+  assert.strictEqual(st.wallTop.length + st.wallBot.length, 0);
 
   // 全部关闭统计面板 -> 移庄
   for (let s = 0; s < 4; s += 1) engine.applyAction(st, players, s, 'closeSummary');
@@ -318,7 +318,7 @@ test('6人局牌墙不足时提前结束大回合', () => {
   }
 
   assert.strictEqual(st.phase, 'big_end');
-  assert.strictEqual(st.wall.length, 4, '6人局 3 局用 36 张，剩 4 张');
+  assert.strictEqual(st.wallTop.length + st.wallBot.length, 4, '6人局 3 局用 36 张，剩 4 张');
   assert.strictEqual(st.history.length, 3);
 });
 

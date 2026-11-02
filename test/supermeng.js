@@ -235,7 +235,7 @@ test('闲家服了（fold）必输，不与庄家比牌', () => {
   // 手动走：闲家依次叫酒
   while (st.phase === 'bet' && guard < 10) {
     guard += 1;
-    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 1 });
+    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 2 });
     if (!r.ok) throw new Error(r.error);
   }
   assert(st.phase === 'open', `应进开牌，实际 ${st.phase}`);
@@ -260,23 +260,149 @@ test('所有模式庄家至少开一家（换牌模式也不能一家不开）',
   const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'once', betMax: 3 } });
   st._players = players;
   let guard = 0;
-  // 若进入换牌阶段，庄家跳过换牌
-  while (st.phase === 'dealer_change' && guard < 3) {
-    guard += 1;
-    const r = engine.applyAction(st, players, st.dealerSeat, 'skipChange', {});
-    if (!r.ok) throw new Error(r.error);
-  }
-  guard = 0;
   while (st.phase === 'bet' && guard < 10) {
     guard += 1;
-    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 1 });
+    const r = engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 2 });
     if (!r.ok) throw new Error(r.error);
+  }
+  // 新流程：叫酒结束后进入换牌阶段（庄家看牌才能换），跳过换牌
+  if (st.phase === 'dealer_change') {
+    const r = engine.applyAction(st, players, st.dealerSeat, 'skipChange', {});
+    assert(r.ok, r.error);
   }
   assert(st.phase === 'open', `应进开牌，实际 ${st.phase}`);
   // 庄家 0 家直接结束开牌 → 应被拒绝
   const r = engine.applyAction(st, players, st.dealerSeat, 'stopOpen', {});
   assert(!r.ok, '换牌模式 0 家结束开牌应被拒绝');
   assert(r.error === '庄家至少开一家', `错误信息应为「庄家至少开一家」，实际 ${r.error}`);
+});
+
+test('顺子想象牌：顶牌相同，想象牌越小越强（KA > QA > QK）', () => {
+  const cfg2 = cfg({ ace23: true });
+  const KA = evaluateHand(C(13, 's'), C(14, 'h'), cfg2);
+  const QA = evaluateHand(C(12, 's'), C(14, 'h'), cfg2);
+  const QK = evaluateHand(C(12, 's'), C(13, 'h'), cfg2);
+  assert(KA.imagine === 12 && QA.imagine === 13 && QK.imagine === 14, '想象牌应为 Q/K/A');
+  assert(compareHands(KA, QA, cfg2) === 1, 'KA > QA');
+  assert(compareHands(QA, QK, cfg2) === 1, 'QA > QK');
+  // 顶牌不同时仍按顶牌：567(顶7) < 678(顶8)
+  const s567 = evaluateHand(C(5, 's'), C(7, 'h'), cfg2);
+  const s678 = evaluateHand(C(6, 's'), C(7, 'h'), cfg2);
+  assert(s567.rank === 7 && s678.rank === 8, '顶牌 7 vs 8');
+  assert(compareHands(s678, s567, cfg2) === 1, '678 > 567');
+});
+
+test('闷牌每人每场限 3 次', () => {
+  const players = mkPlayers(2);
+  const st = supermeng.createState({ playerCount: 2, config: { allowBlind: true, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  st.blindUsed[st.currentSeat] = 3;
+  const r = engine.applyAction(st, players, st.currentSeat, 'blindChoice', { blind: true });
+  assert(!r.ok && /闷牌次数已用完/.test(r.error), '已用 3 次后应拒绝继续闷牌');
+  // 看牌仍允许
+  const r2 = engine.applyAction(st, players, st.currentSeat, 'blindChoice', { blind: false });
+  assert(r2.ok, '看牌不受限制');
+});
+
+test('锁牌整场限 1 次', () => {
+  const players = mkPlayers(3);
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  st.lockUsedCount = 1;
+  st.bets[st.betOrder[0]] = 3;
+  const last = st.betOrder[st.betOrder.length - 1];
+  st.currentSeat = last;
+  const r = engine.applyAction(st, players, last, 'lock', {});
+  assert(!r.ok && /锁牌次数已用完/.test(r.error), '整场已锁 1 次后应拒绝');
+});
+
+test('下一局：未被开牌的闲家保留手牌，被开的和庄家重发', () => {
+  const players = mkPlayers(3);
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  const before = st.hands.map((h) => h.map((c) => c.id).join(','));
+  // 叫酒
+  let g = 0;
+  while (st.phase === 'bet' && g < 10) { g += 1; engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 2 }); }
+  // 只开 seat1，seat2 不开
+  engine.applyAction(st, players, 0, 'open', { seat: 1 });
+  engine.applyAction(st, players, 1, 'fold', {});
+  const r = engine.applyAction(st, players, 0, 'stopOpen', {});
+  assert(r.ok, r.error);
+  assert(st.phase === 'settle', '应到结算');
+  assert(st.opened[1] === 'fold', 'seat1 应记录为已开牌');
+  // 结算面板仍需牌面，手牌暂不清空；重发与否在下一局决定
+  // 下一局
+  engine.applyAction(st, players, 0, 'nextRound', {});
+  const after = st.hands.map((h) => h.map((c) => c.id).join(','));
+  assert(after[2] === before[2], 'seat2 应保留原手牌');
+  assert(after[1] !== before[1], 'seat1 应重新发牌');
+  assert(after[0] !== before[0], '庄家应重新发牌');
+});
+
+test('换牌时机：叫酒结束后才可换', () => {
+  const players = mkPlayers(3);
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'once', betMax: 3 } });
+  st._players = players;
+  assert(st.phase === 'bet', `发牌后应直接叫酒，实际 ${st.phase}`);
+  let g = 0;
+  while (st.phase === 'bet' && g < 10) { g += 1; engine.applyAction(st, players, st.currentSeat, 'bet', { cups: 2 }); }
+  assert(st.phase === 'dealer_change', `叫酒结束后应进换牌，实际 ${st.phase}`);
+  const r = engine.applyAction(st, players, st.dealerSeat, 'skipChange', {});
+  assert(r.ok, r.error);
+  assert(st.phase === 'open', '跳过换牌后应进开牌');
+});
+
+test('炸弹最少叫 2 杯：看牌玩家受限制', () => {
+  const players = mkPlayers(3);
+  const C = (r, su) => ({ id: su + r, rank: r, suit: su });
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  st.hands[1] = [C(9, 's'), C(9, 'h')]; // 真炸
+  st.blind = [false, false, false];
+  st.phase = 'bet';
+  st.currentSeat = 1;
+
+  const h = supermeng.hintsFor(st, 1);
+  assert(h.betMin === 2, '看牌炸弹的 betMin 应为 2');
+
+  const r1 = engine.applyAction(st, players, 1, 'bet', { cups: 1 });
+  assert(!r1.ok, '炸弹叫 1 杯应被拒绝');
+  assert(r1.error === '炸弹最少叫 2 杯', `错误信息应为「炸弹最少叫 2 杯」，实际 ${r1.error}`);
+
+  const r2 = engine.applyAction(st, players, 1, 'bet', { cups: 2 });
+  assert(r2.ok, '炸弹叫 2 杯应通过');
+  assert(st.bets[1] === 2, '押注应为 2 杯');
+});
+
+test('炸弹最少叫 2 杯：闷牌不限制（看不到牌，不追溯）', () => {
+  const players = mkPlayers(3);
+  const C = (r, su) => ({ id: su + r, rank: r, suit: su });
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: true, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  st.hands[2] = [C(7, 's'), C(7, 'h')]; // 真炸但闷牌
+  st.blind = [false, false, true];
+  st.phase = 'bet';
+  st.currentSeat = 2;
+
+  assert(supermeng.hintsFor(st, 2).betMin === 1, '闷牌时 betMin 应为 1');
+  const r = engine.applyAction(st, players, 2, 'bet', { cups: 1 });
+  assert(r.ok, '闷牌炸弹叫 1 杯应允许');
+});
+
+test('炸弹最少叫 2 杯：235 不算炸弹，不限制', () => {
+  const players = mkPlayers(3);
+  const C = (r, su) => ({ id: su + r, rank: r, suit: su });
+  const st = supermeng.createState({ playerCount: 3, config: { allowBlind: false, dealerChange: 'none', betMax: 3 } });
+  st._players = players;
+  st.hands[1] = [C(2, 's'), C(5, 'h')]; // 235 不同色
+  st.blind = [false, false, false];
+  st.phase = 'bet';
+  st.currentSeat = 1;
+
+  assert(supermeng.hintsFor(st, 1).betMin === 1, '235 的 betMin 应为 1');
+  const r = engine.applyAction(st, players, 1, 'bet', { cups: 1 });
+  assert(r.ok, '235 叫 1 杯应允许');
 });
 
 test('大回合：打完整副牌触发移庄', () => {

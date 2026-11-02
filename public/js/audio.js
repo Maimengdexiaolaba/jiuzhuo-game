@@ -7,23 +7,45 @@
  */
 
 let ctx = null;
-let enabled = true;
+let sfxEnabled = true;   // 音效 / 语音播报
+let bgmEnabled = true;   // 背景音乐
 
 const VOICE_BASE = '/assets/audio/voice';
 
+/** 总开关（兼容旧调用）：同时控制音效与背景音乐 */
 export function setAudioEnabled(v) {
-  const wasEnabled = enabled;
-  enabled = !!v;
-  if (!enabled) {
-    stopVoice();
+  setSfxEnabled(v);
+  setBgmEnabled(v);
+}
+
+export function isAudioEnabled() {
+  return sfxEnabled || bgmEnabled;
+}
+
+/** 音效 / 语音播报开关 */
+export function setSfxEnabled(v) {
+  sfxEnabled = !!v;
+  if (!sfxEnabled) stopVoice();
+}
+
+export function isSfxEnabled() {
+  return sfxEnabled;
+}
+
+/** 背景音乐开关 */
+export function setBgmEnabled(v) {
+  const next = !!v;
+  if (bgmEnabled === next) return;
+  bgmEnabled = next;
+  if (!bgmEnabled) {
     stopBgm();
-  } else if (!wasEnabled) {
+  } else if (bgmWant) {
     startBgm(bgmWant);
   }
 }
 
-export function isAudioEnabled() {
-  return enabled;
+export function isBgmEnabled() {
+  return bgmEnabled;
 }
 
 function ac() {
@@ -40,7 +62,7 @@ function ac() {
 }
 
 function tone(freq, dur = 0.12, type = 'sine', gain = 0.18, delay = 0) {
-  if (!enabled) return;
+  if (!sfxEnabled) return;
   const c = ac();
   if (!c) return;
   const t0 = c.currentTime + delay;
@@ -57,7 +79,7 @@ function tone(freq, dur = 0.12, type = 'sine', gain = 0.18, delay = 0) {
 }
 
 function noise(dur = 0.15, gain = 0.12, delay = 0) {
-  if (!enabled) return;
+  if (!sfxEnabled) return;
   const c = ac();
   if (!c) return;
   const t0 = c.currentTime + delay;
@@ -133,7 +155,7 @@ async function flushVoiceChain() {
       const name = voiceQueue.shift();
       const buf = await loadVoiceBuffer(name);
       if (!buf) continue;
-      if (!enabled) { voiceQueue = []; break; }
+      if (!sfxEnabled) { voiceQueue = []; break; }
       if (!c || c.state === 'closed') break;
       const src = c.createBufferSource();
       src.buffer = buf;
@@ -149,7 +171,7 @@ async function flushVoiceChain() {
 }
 
 export function speak(parts) {
-  if (!enabled) return;
+  if (!sfxEnabled) return;
   const list = Array.isArray(parts) ? parts : [parts];
   const names = list.filter(Boolean).map((p) => String(p));
   // 预取，让衔接时已经解码好
@@ -390,7 +412,7 @@ function stopBgm() {
 export function setBgmMood(mood) {
   const next = mood && BGM_PRESET[mood] ? mood : null;
   bgmWant = next;
-  if (!enabled) return;          // 音效关闭时只记下期望场景
+  if (!bgmEnabled) return;        // 背景音乐关闭时只记下期望场景
   if (bgmMood === next && bgmTimer) return;
   startBgm(next);
 }
@@ -408,7 +430,7 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; }
-    } else if (enabled && bgmWant && !bgmTimer) {
+    } else if (bgmEnabled && bgmWant && !bgmTimer) {
       startBgm(bgmWant);
     }
   });

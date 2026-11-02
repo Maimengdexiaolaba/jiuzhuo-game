@@ -21,6 +21,35 @@ const ASSETS = {
   supermeng: { dir: '/assets/supermeng/cards', ext: 'svg', back: '/assets/xihua/back.jpg' },
 };
 
+/** 当前用户的牌面皮肤（classic | xihua），默认经典 */
+let cardFace = 'classic';
+
+/** 皮肤值 → 素材目录 key */
+const FACE_ASSET = { classic: 'supermeng', xihua: 'xihua' };
+
+/** 设置牌面皮肤（由 App 根据用户 skins 调用） */
+export function setCardFace(face) {
+  cardFace = face === 'xihua' ? 'xihua' : 'classic';
+}
+
+export function getCardFace() {
+  return cardFace;
+}
+
+/** 当前皮肤对应的默认素材 key */
+function defaultAsset() {
+  return FACE_ASSET[cardFace] || 'supermeng';
+}
+
+/**
+ * 是否默认叠加「大号数字 + 花色」角标：
+ * - 西游记插画牌面本身没有数字 → 需要角标保证可读
+ * - 经典 CC0 扑克牌面自带清晰的数字角标 → 不再叠加，避免盖住原牌角
+ */
+function defaultCorner() {
+  return cardFace === 'xihua';
+}
+
 export function cardFile(card) {
   if (card.rank === 16) return 'joker_b';
   if (card.rank === 15) return 'joker_s';
@@ -37,7 +66,8 @@ export function cardSrc(card, asset = 'xihua') {
  * @param {{size?:string, selected?:boolean, meta?:object, dim?:boolean, playable?:boolean, idx?:number, extraClass?:string, asset?:string, corner?:boolean}} opts
  */
 export function playCardHTML(card, opts = {}) {
-  const { size = 'md', selected = false, meta = null, dim = false, playable = false, idx = -1, extraClass = '', style = '', asset = 'xihua', corner = true } = opts;
+  const { size = 'md', selected = false, meta = null, dim = false, playable = false, idx = -1, extraClass = '', style = '', asset = defaultAsset() } = opts;
+  const corner = opts.corner !== undefined ? opts.corner : defaultCorner();
   const cls = ['pcard', `pcard--${size}`];
   if (selected) cls.push('is-selected');
   if (dim) cls.push('is-dim');
@@ -65,7 +95,7 @@ export function playCardHTML(card, opts = {}) {
   </div>`;
 }
 
-export function backCardHTML(size = 'sm', extraClass = '', asset = 'xihua') {
+export function backCardHTML(size = 'sm', extraClass = '', asset = defaultAsset()) {
   const a = ASSETS[asset] || ASSETS.xihua;
   return `<div class="pcard pcard--${size} pcard--back ${extraClass}">
     <img class="pcard-img" src="${a.back}" alt="牌背" draggable="false" />

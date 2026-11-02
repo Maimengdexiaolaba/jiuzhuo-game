@@ -11,6 +11,11 @@ import { evaluateHand, compareHands } from './rules.js';
 
 export const MODE = 'supermeng';
 
+/** 整场每人闷牌次数上限 */
+export const BLIND_LIMIT = 3;
+/** 整场锁牌次数上限 */
+export const LOCK_LIMIT = 1;
+
 export const PHASE = {
   BLIND: 'blind',           // 发牌前声明闷牌
   DEALER_CHANGE: 'dealer_change', // 庄家看牌后可选换牌
@@ -40,6 +45,20 @@ function emit(state, event) {
 
 const fail = (error) => ({ ok: false, error });
 const ok = (extra = {}) => ({ ok: true, ...extra });
+
+/**
+ * 该座位的最低叫酒杯数
+ * 看牌 + 手牌是炸弹（真炸 / 假炸 / 天炸）→ 最少 2 杯
+ * 闷牌看不到牌 → 不限制（开牌发现是炸弹也不追溯）
+ */
+function minBetFor(state, seat) {
+  if (!state || seat === undefined || seat === null || seat < 0) return 1;
+  if (state.blind && state.blind[seat]) return 1;
+  const hand = state.hands[seat] || [];
+  if (hand.length !== 2) return 1;
+  const h = evaluateHand(hand[0], hand[1], state.config);
+  return h.key === 'bomb' ? 2 : 1;
+}
 
 function betOrderSeats(state) {
   const order = [];
@@ -99,6 +118,9 @@ export function createState({ playerCount, config }) {
     blind: Array.from({ length: playerCount }, () => false),
     blindOrder: [],
     blindCursor: 0,
+    // 整场（一个庄家任期）累计：每人闷牌次数、锁牌次数
+    blindUsed: Array.from({ length: playerCount }, () => 0),
+    lockUsedCount: 0,
     bets: Array.from({ length: playerCount }, () => 0),
     betConfirmed: Array.from({ length: playerCount }, () => false),
     betOrder: [],
@@ -129,7 +151,16 @@ export function createState({ playerCount, config }) {
 }
 
 function startRound(state) {
-  state.hands = Array.from({ length: state.playerCount }, () => []);
+  // 上一局被庄家开过牌的闲家 → 手牌视为消耗，本局重发；
+  // 没被开过牌的闲家 → 保留手牌，本局不重发；庄家每局重发
+  const isFirstRound = state.roundNo === 0;
+  const prevOpened = Array.isArray(state.opened) ? state.opened.slice() : [];
+  state.hands = state.hands.map((h, s) => {
+    if (isFirstRound) return [];
+    if (s === state.dealerSeat) return [];
+    if (prevOpened[s]) return [];
+    return h.length === 2 ? h.slice() : [];
+  });
   state.blind = Array.from({ length: state.playerCount }, () => false);
   state.bets = Array.from({ length: state.playerCount }, () => 0);
   state.betOrder = [];
@@ -155,17 +186,28 @@ function startRound(state) {
 
 function dealNow(state) {
   for (let s = 0; s < state.playerCount; s += 1) {
+    if (state.hands[s].length >= 2) continue; // 保留手牌的玩家不重发
     state.hands[s] = [state.deck.pop(), state.deck.pop()].filter(Boolean);
   }
   emit(state, { type: 'deal', handCounts: state.hands.map((h) => h.length), deckLeft: state.deck.length });
+  // 叫酒在前，换牌在叫酒结束后（庄家看牌才能换）
+  state.phase = PHASE.BET;
+  beginBet(state);
+}
 
-  if (state.dealerChangeLimit > 0 && state.dealerChangeUsed < state.dealerChangeLimit && !state.blind[state.dealerSeat]) {
+/** 叫酒结束 → 庄家看牌且仍有换牌次数则进换牌，否则直接开牌 */
+function afterBet(state) {
+  const canChange = state.dealerChangeLimit > 0
+    && state.dealerChangeUsed < state.dealerChangeLimit
+    && !state.blind[state.dealerSeat];
+  if (canChange) {
     state.phase = PHASE.DEALER_CHANGE;
     state.currentSeat = state.dealerSeat;
-  } else {
-    state.phase = PHASE.BET;
-    beginBet(state);
+    return;
   }
+  state.phase = PHASE.OPEN;
+  state.openSeat = null;
+  state.currentSeat = state.dealerSeat;
 }
 
 function beginBet(state) {
@@ -173,19 +215,15 @@ function beginBet(state) {
   state.betOrder = order;
   if (state.locked) {
     for (const seat of order) state.bets[seat] = state.locked.cups;
-    state.phase = PHASE.OPEN;
-    state.openSeat = null;
-    state.currentSeat = state.dealerSeat;
     emit(state, { type: 'lockAuto', cups: state.locked.cups });
+    afterBet(state);
     return;
   }
   // 干 2：全场默认 2 杯，跳过逐人叫酒
   if (state.config.betMax === 'g2') {
     for (const seat of order) state.bets[seat] = 2;
-    state.phase = PHASE.OPEN;
-    state.openSeat = null;
-    state.currentSeat = state.dealerSeat;
     emit(state, { type: 'g2Auto', cups: 2 });
+    afterBet(state);
     return;
   }
   state.betCursor = 0;
@@ -196,9 +234,7 @@ function advanceBet(state) {
   const order = state.betOrder;
   const idx = order.indexOf(state.currentSeat);
   if (idx + 1 >= order.length) {
-    state.phase = PHASE.OPEN;
-    state.openSeat = null;
-    state.currentSeat = state.dealerSeat;
+    afterBet(state);
     return;
   }
   state.betCursor = idx + 1;
@@ -285,6 +321,10 @@ function endRound(state) {
   };
 
   state.history.push({ roundNo: state.roundNo, dealerSeat: state.dealerSeat, results: JSON.parse(JSON.stringify(state.results)) });
+
+  // 注意：这里不清空手牌（结算面板还要展示牌面）。
+  // 「未被开牌保留手牌 / 被开牌重发」在下一局 startRound 时按上一局 opened 判断。
+
   state.phase = PHASE.SETTLE;
   emit(state, { type: 'settle', results: state.results });
 }
@@ -293,8 +333,19 @@ export const actions = {
   blindChoice(state, players, actor, payload) {
     if (state.phase !== PHASE.BLIND) return fail('当前无需声明闷牌');
     if (actor.seat !== state.currentSeat) return fail('还没轮到你声明');
-    state.blind[actor.seat] = !!payload?.blind;
-    emit(state, { type: 'blind', seat: actor.seat, blind: state.blind[actor.seat] });
+    const wantBlind = !!payload?.blind;
+    // 每人每场限闷 3 次
+    if (wantBlind && (state.blindUsed[actor.seat] || 0) >= BLIND_LIMIT) {
+      return fail(`本场闷牌次数已用完（每人限 ${BLIND_LIMIT} 次），只能看牌`);
+    }
+    state.blind[actor.seat] = wantBlind;
+    if (wantBlind) state.blindUsed[actor.seat] = (state.blindUsed[actor.seat] || 0) + 1;
+    emit(state, {
+      type: 'blind',
+      seat: actor.seat,
+      blind: state.blind[actor.seat],
+      blindLeft: BLIND_LIMIT - (state.blindUsed[actor.seat] || 0),
+    });
 
     state.blindCursor += 1;
     if (state.blindCursor >= state.blindOrder.length) {
@@ -322,16 +373,18 @@ export const actions = {
     state.dealerChangeUsed += 1;
     state.dealerSelfPenalty += 1;
     emit(state, { type: 'changeCards', seat: actor.seat, used: state.dealerChangeUsed, limit: state.dealerChangeLimit });
-    state.phase = PHASE.BET;
-    beginBet(state);
+    state.phase = PHASE.OPEN;
+    state.openSeat = null;
+    state.currentSeat = state.dealerSeat;
     return ok();
   },
 
   skipChange(state, players, actor) {
     if (state.phase !== PHASE.DEALER_CHANGE) return fail('当前不能跳过');
     if (actor.seat !== state.dealerSeat) return fail('只有庄家能操作');
-    state.phase = PHASE.BET;
-    beginBet(state);
+    state.phase = PHASE.OPEN;
+    state.openSeat = null;
+    state.currentSeat = state.dealerSeat;
     return ok();
   },
 
@@ -340,6 +393,10 @@ export const actions = {
     if (actor.seat !== state.currentSeat) return fail('还没轮到你叫酒');
     const cups = Number(payload?.cups);
     if (![1, 2, 3].includes(cups) || cups > state.config.betMax) return fail('叫酒数量不合法');
+    // 炸弹（真炸 / 假炸 / 天炸）最少叫 2 杯；闷牌玩家看不到牌，不限制也不追溯
+    if (cups < 2 && minBetFor(state, actor.seat) > cups) {
+      return fail('炸弹最少叫 2 杯');
+    }
     state.bets[actor.seat] = cups;
     emit(state, { type: 'bet', seat: actor.seat, cups });
     advanceBet(state);
@@ -348,12 +405,14 @@ export const actions = {
 
   lock(state, players, actor) {
     if (state.phase !== PHASE.BET) return fail('当前不能锁酒');
+    if (state.lockUsedCount >= LOCK_LIMIT) return fail(`本场锁牌次数已用完（整场限 ${LOCK_LIMIT} 次）`);
     const order = betOrderSeats(state);
     const last = order[order.length - 1];
     if (actor.seat !== last) return fail('只有尾家能锁酒');
     const firstCups = state.bets[order[0]];
     if (!(firstCups === 2 || firstCups === 3)) return fail('首家未叫 2 杯或 3 杯，不能锁');
     state.locked = { cups: firstCups };
+    state.lockUsedCount += 1;
     for (const seat of order) state.bets[seat] = firstCups;
     emit(state, { type: 'lock', cups: firstCups });
     state.phase = PHASE.OPEN;
@@ -392,16 +451,34 @@ export const actions = {
     const d = evaluateHand(dealerHand(state)[0], dealerHand(state)[1], state.config);
     const h = evaluateHand(state.hands[actor.seat][0], state.hands[actor.seat][1], state.config);
     const cmp = compareHands(d, h, state.config);
-    // 只比牌、不亮牌：仅广播输赢结果，具体牌面留到统计面板统一展示
+    // 亮牌规则：双方都看牌 → 亮牌即时展示；任一方闷牌 → 只出输赢，牌面留到本庄统计
+    const seatSaw = !state.blind[actor.seat];
+    const dealerSaw = !state.blind[state.dealerSeat] || state.dealerSawOwn;
+    const reveal = seatSaw && dealerSaw;
     emit(state, {
       type: 'fight',
       seat: actor.seat,
       dealerWin: cmp >= 0,
       seatName: players.find((p) => p.seat === actor.seat)?.name || '',
+      reveal,
+      hand: reveal ? state.hands[actor.seat].slice() : null,
+      dealerHand: reveal ? dealerHand(state).slice() : null,
+      handName: reveal ? h.name : '',
+      dealerHandName: reveal ? d.name : '',
     });
     state.openSeat = null;
     state.openedCount += 1;
     state.currentSeat = state.dealerSeat;
+    return ok();
+  },
+
+  /** 闲家看牌（闷牌声明后，本局中途看自己的牌） */
+  revealSelf(state, players, actor) {
+    if (state.phase !== PHASE.OPEN) return fail('当前不能看牌');
+    if (actor.seat === state.dealerSeat) return fail('庄家请用看牌按钮');
+    if (!state.blind[actor.seat]) return fail('你已经是看牌状态');
+    state.blind[actor.seat] = false;
+    emit(state, { type: 'revealSelf', seat: actor.seat, hand: state.hands[actor.seat].slice() });
     return ok();
   },
 
@@ -462,6 +539,9 @@ export const actions = {
     state.totalDeck = deckSize(state.config.withJoker);
     state.dealerChangeUsed = 0;
     state.locked = null;
+    // 移庄 / 连庄 = 新的一场游戏：闷牌、锁牌次数重置
+    state.blindUsed = Array.from({ length: state.playerCount }, () => 0);
+    state.lockUsedCount = 0;
     state.bigRound += 1;
     state.bigStats = null;
     state.history = [];
@@ -612,6 +692,10 @@ export function serialize(state) {
     meta: cardMeta(state.config.withJoker),
     handCounts: state.hands.map((h) => h.length),
     blind: state.blind,
+    blindUsed: state.blindUsed,
+    blindLimit: BLIND_LIMIT,
+    lockUsedCount: state.lockUsedCount,
+    lockLimit: LOCK_LIMIT,
     bets: state.bets,
     betOrder: state.betOrder,
     locked: state.locked,
@@ -629,5 +713,15 @@ export function serialize(state) {
     history: state.history,
     newDealerSeat: state.newDealerSeat,
     lastEvent: state.lastEvent,
+  };
+}
+
+/** 下发到前端的个人提示（叫酒杯数上下限等） */
+export function hintsFor(state, seat) {
+  if (!state || seat === undefined || seat === null || seat < 0) return null;
+  return {
+    betMin: minBetFor(state, seat),
+    betMax: state.config.betMax,
+    myTurnToBet: state.phase === PHASE.BET && state.currentSeat === seat,
   };
 }

@@ -51,16 +51,24 @@ export function isStraightPair(a, b, ace23) {
   return false;
 }
 
-/** 顺子的「最大牌」点数 */
-function straightTop(a, b, ace23) {
+/**
+ * 顺子信息：顶牌 + 「想象的那张牌」
+ * 想象牌由两张手牌唯一确定：
+ *   - 相邻（差 1）→ 往上补一张：6,7 → 想象 8（顶 8）
+ *   - 隔一张（差 2）→ 补中间：5,7 → 想象 6（顶 7）
+ *   - 相邻且顶到 A → 只能往下补：K,A → 想象 Q（顶 A）
+ *   - A 当 1 → A,2 想象 3；A,3 想象 2（顶 3）
+ */
+function straightInfo(a, b, ace23) {
   const diff = Math.abs(a - b);
   const hi = Math.max(a, b);
   const lo = Math.min(a, b);
-  if (ace23 && hi === 14 && (lo === 2 || lo === 3)) return 3; // A23
-  if (diff === 2) return hi; // 5,7 -> 想象 6 -> 顶 7
-  // diff === 1：5,6 -> 想象 7 -> 顶 7；K,A -> 顶 A(14)
-  if (hi === 14) return 14; // K,A
-  return hi + 1;
+  if (ace23 && hi === 14 && (lo === 2 || lo === 3)) {
+    return { top: 3, imagine: lo === 2 ? 3 : 2 };
+  }
+  if (diff === 2) return { top: hi, imagine: hi - 1 };
+  if (hi === 14) return { top: 14, imagine: lo - 1 };
+  return { top: hi + 1, imagine: hi + 1 };
 }
 
 /** 判定两手牌（2 张）的最终牌型 */
@@ -101,15 +109,15 @@ export function evaluateHand(c1, c2, config) {
 
   const ace23 = cfg.ace23 !== false;
   const straight = isStraightPair(a, b, ace23);
-  const top = straightTop(a, b, ace23);
+  const info = straight ? straightInfo(a, b, ace23) : null;
 
   if (straight && sameSuit) {
-    const h = { key: 'flushStraight', rank: top };
+    const h = { key: 'flushStraight', rank: info.top, imagine: info.imagine };
     h.name = handName(h);
     return h;
   }
   if (straight) {
-    const h = { key: 'straight', rank: top };
+    const h = { key: 'straight', rank: info.top, imagine: info.imagine };
     h.name = handName(h);
     return h;
   }
@@ -177,5 +185,12 @@ export function compareHands(a, b, config) {
   const ar = aKey === 'single' && a.key === 'bomb235' ? 5 : a.rank;
   const br = bKey === 'single' && b.key === 'bomb235' ? 5 : b.rank;
   if (ar !== br) return ar > br ? 1 : -1;
+
+  // 顺子 / 同花顺：顶牌相同 → 比「想象的那张牌」，想象牌越小越强（KA > QA > QK）
+  if (aKey === 'straight' || aKey === 'flushStraight') {
+    const ai = a.imagine ?? 99;
+    const bi = b.imagine ?? 99;
+    if (ai !== bi) return ai < bi ? 1 : -1;
+  }
   return 0;
 }

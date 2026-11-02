@@ -461,7 +461,18 @@ export class Room {
       if (seat === viewerSeat) return true;
       if (this.state.revealed && this.state.revealed[seat]) return true;
       if (!revealAtEnd) return false;
-      if (this.state.phase === PHASE.SETTLE || this.state.phase === PHASE.BIG_END || this.state.phase === PHASE.DEALER_PICK) {
+      // 本庄统计 / 移庄选人：本庄已结束，全部手牌公开
+      if (this.state.phase === PHASE.BIG_END || this.state.phase === PHASE.DEALER_PICK) {
+        return true;
+      }
+      // 本局结算：超级梦幻只公开「庄家 + 被开过牌的闲家」
+      // 未被开牌的闲家手里还留着牌（下局继续用），提前亮出会让下局变明牌
+      if (this.state.phase === PHASE.SETTLE) {
+        if (isSupermeng) {
+          if (seat === this.state.dealerSeat) return true;
+          if (this.state.opened && this.state.opened[seat]) return true;
+          return false;
+        }
         return true;
       }
       return false;
@@ -497,6 +508,25 @@ export class Room {
     const myHand = (this.state && viewerSeat >= 0 && handsVisible(viewerSeat))
       ? this.state.hands[viewerSeat] || []
       : [];
+
+    // 超级梦幻：比牌那一刻的双方牌面，只给「被开的闲家 + 庄家自己 + 管理员上帝视角」看
+    // 其他闲家 / 普通观战者一律脱敏，前端渲染成牌背 —— 否则后面被开的闲家能照着庄家的牌决定服不服
+    if (isSupermeng && gs && gs.lastEvent && gs.lastEvent.type === 'fight') {
+      const fightSeat = gs.lastEvent.seat;
+      const involved =
+        (isSpectator && isAdminSpec) ||
+        (!isSpectator && (viewerSeat === fightSeat || viewerSeat === this.state?.dealerSeat));
+      if (!involved) {
+        gs.lastEvent = {
+          ...gs.lastEvent,
+          hand: null,
+          dealerHand: null,
+          handName: '',
+          dealerHandName: '',
+          hidden: true,
+        };
+      }
+    }
 
     return {
       id: this.id,

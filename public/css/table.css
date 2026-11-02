@@ -63,7 +63,7 @@
   flex-direction: column;
   gap: clamp(10px, 1.6vw, 18px);
   background:
-    radial-gradient(ellipse 78% 70% at 50% 46%, rgba(24, 92, 72, 0.72) 0%, rgba(11, 48, 37, 0.86) 58%, rgba(6, 28, 22, 0.92) 100%);
+    radial-gradient(ellipse 78% 70% at 50% 46%, var(--felt-glow-1) 0%, var(--felt-glow-2) 58%, var(--felt-glow-3) 100%);
   overflow: hidden;
 }
 .felt::before {
@@ -71,7 +71,7 @@
   position: absolute;
   inset: 14px;
   border-radius: 28px;
-  border: 1px solid rgba(212, 176, 106, 0.14);
+  border: 1px solid var(--line);
   pointer-events: none;
 }
 .felt::after {
@@ -232,17 +232,60 @@
 .wall-title {
   font-size: 10.5px; letter-spacing: .22em; color: var(--muted);
 }
-.wall-stacks { display: flex; flex-direction: column; gap: 8px; }
-.wall-row { display: flex; gap: 2px; flex-wrap: nowrap; }
-.wall-row .tile { --tw: 11px; border-radius: 2px; opacity: .96; }
+/* 牌墙 3D 叠放：上层 + 下层，带透视和厚度 */
+.wall-3d {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  perspective: 620px;
+  perspective-origin: 50% 90%;
+  padding: 8px 0 16px;
+}
+.wall-row {
+  display: flex;
+  gap: 2px;
+  flex-wrap: nowrap;
+  transform-style: preserve-3d;
+}
+.wall-row--top {
+  transform: rotateX(26deg) translateZ(22px);
+  transform-origin: 50% 100%;
+}
+.wall-row--bot {
+  transform: rotateX(26deg) translateZ(0);
+  transform-origin: 50% 100%;
+}
+.wall-row .tile {
+  --tw: 13px;
+  border-radius: 2px;
+  opacity: .98;
+  /* 多层堆叠阴影模拟牌的厚度侧面 */
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, .65),
+    0 2px 0 rgba(255, 255, 255, .07),
+    0 3px 0 rgba(0, 0, 0, .55),
+    0 4px 0 rgba(255, 255, 255, .05),
+    0 5px 0 rgba(0, 0, 0, .45),
+    0 8px 14px rgba(0, 0, 0, .5);
+}
 .wall-row .tile.is-used {
-  opacity: .22;
-  background: rgba(255, 255, 255, .06);
-  border: 1px solid rgba(255, 255, 255, .05);
+  opacity: .18;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .04);
   box-shadow: none;
 }
-.wall-count { font-size: 12px; color: var(--text-dim); }
-.wall-count b { color: var(--gold-strong); font-size: 15px; }
+/* 切牌：上层抬起 → 移位 → 落下（下叠不动） */
+@keyframes wallCutLift {
+  0%   { transform: rotateX(26deg) translateZ(22px) translateY(0) translateX(0); }
+  28%  { transform: rotateX(26deg) translateZ(62px) translateY(-14px) translateX(0); }
+  64%  { transform: rotateX(26deg) translateZ(62px) translateY(-14px) translateX(-10px); }
+  100% { transform: rotateX(26deg) translateZ(22px) translateY(0) translateX(0); }
+}
+.wall-row--top.is-cutting {
+  animation: wallCutLift .95s cubic-bezier(.34, .02, .24, 1);
+}
+.wall-count { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.wall-count b { color: var(--gold-strong); font-size: 14px; }
 
 .dice-zone {
   display: flex;
@@ -589,9 +632,32 @@
   animation: fadeIn .18s both;
 }
 .cut-stage { display: flex; flex-direction: column; align-items: center; gap: 22px; }
-.cut-rows { display: flex; flex-direction: column; gap: 12px; }
-.cut-row { display: flex; gap: 3px; }
-.cut-row .tile { --tw: 20px; }
+/* 切牌台也做 3D 叠放：上层浮起、下层压底 */
+.cut-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  perspective: 520px;
+  perspective-origin: 50% 42%;
+  padding: 10px 0 14px;
+}
+.cut-row { display: flex; gap: 3px; transform-style: preserve-3d; }
+.cut-row--top {
+  transform: rotateX(32deg) translateZ(16px);
+  transform-origin: 50% 100%;
+}
+.cut-row--bot {
+  transform: rotateX(32deg) translateZ(-4px);
+  transform-origin: 50% 100%;
+  opacity: .9;
+}
+.cut-row .tile {
+  --tw: 20px;
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, .55),
+    0 2px 0 rgba(255, 255, 255, .05),
+    0 5px 10px rgba(0, 0, 0, .5);
+}
 .cut-arrow { font-size: 12px; letter-spacing: .3em; color: var(--gold-strong); }
 
 /* ---------- 发牌 / 亮牌动画 ---------- */

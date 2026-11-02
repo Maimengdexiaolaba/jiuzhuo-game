@@ -65,14 +65,26 @@ function nameOf(room, seat) {
   return room.players.find((p) => p.seat === seat)?.name || `座位 ${seat}`;
 }
 
-/** 西游记事件音效与播报 */
+/** 西游记事件音效与播报（按 seq 增量消费多条事件，避免被 lastEvent 覆盖） */
 function handleXihuaEvents(g) {
-  const ev = g?.lastEvent;
-  if (!ev) return;
-  if (!lastSeq) { lastSeq = ev.seq; return; }
-  if (ev.seq <= lastSeq) return;
-  lastSeq = ev.seq;
+  const list = Array.isArray(g?.events) && g.events.length
+    ? g.events
+    : (g?.lastEvent ? [g.lastEvent] : []);
+  if (!list.length) return;
 
+  // 首帧只记录基线，不回放历史
+  if (!lastSeq) {
+    lastSeq = list[list.length - 1].seq;
+    return;
+  }
+  for (const ev of list) {
+    if (ev.seq <= lastSeq) continue;
+    lastSeq = ev.seq;
+    dispatchXihuaEvent(ev);
+  }
+}
+
+function dispatchXihuaEvent(ev) {
   if (ev.type === 'play') {
     sfx.play();
     const roleKey = ROLE_KEY[ev.rank];
@@ -386,7 +398,17 @@ function openXihuaSettle(App, room) {
   const winner = res.winnerSeat;
   const isWinner = winner === room.mySeat;
 
-  const rows = res.entries.map((e) => `
+  const rows = res.entries.map((e) => {
+    // 惩罚区明细：收牌 + 末位剩余手牌 + 桌面剩余牌 = 合计
+    let zoneCell = `${e.zoneCount} 张`;
+    if (isB && (e.fromHand || e.fromTable)) {
+      const parts = [];
+      if (e.fromCollect) parts.push(`收 ${e.fromCollect}`);
+      if (e.fromHand) parts.push(`手 ${e.fromHand}`);
+      if (e.fromTable) parts.push(`桌 ${e.fromTable}`);
+      zoneCell = `${parts.join(' + ')} = <b>${e.zoneCount}</b> 张`;
+    }
+    return `
     <tr class="${e.seat === winner ? 'is-winner' : ''}">
       <td class="xh-place-cell">${e.place}</td>
       <td>
@@ -397,10 +419,11 @@ function openXihuaSettle(App, room) {
       </td>
       <td>${e.finished ? '<span class="tag on">已出完</span>' : `<span class="tag">剩 ${e.remaining} 张</span>`}</td>
       ${isB
-        ? `<td>${e.zoneCount} 张</td>`
+        ? `<td>${zoneCell}</td>`
         : `<td>${e.penaltyCups ?? 0} 杯</td>`}
       <td class="num-lose"><b>${e.cups}</b> 杯</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   const body = `
     <div class="settle-wrap">

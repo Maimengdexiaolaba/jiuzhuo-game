@@ -154,10 +154,10 @@ export function playCut(index) {
       <div class="cut-overlay">
         <div class="cut-stage">
           <div class="cut-rows">
-            <div class="cut-row" data-row="0"></div>
-            <div class="cut-row" data-row="1"></div>
+            <div class="cut-row cut-row--top" data-row="0"></div>
+            <div class="cut-row cut-row--bot" data-row="1"></div>
           </div>
-          <div class="cut-arrow">切 牌 · 第 ${index} 墩</div>
+          <div class="cut-arrow">切 牌 · 上层第 ${index} 张</div>
         </div>
       </div>`);
 
@@ -171,13 +171,15 @@ export function playCut(index) {
       target.appendChild(node);
     }
 
-    await sleep(180);
-    // 上叠上移、下叠下移，交换位置
-    rows[0].style.transition = 'transform .6s cubic-bezier(.3,.8,.4,1)';
-    rows[1].style.transition = 'transform .6s cubic-bezier(.3,.8,.4,1)';
-    rows[0].style.transform = 'translateY(64px)';
-    rows[1].style.transform = 'translateY(-64px)';
-    await sleep(760);
+    await sleep(200);
+    // 只切上层：上层抬起 → 侧移 → 落下；下叠全程不动
+    rows[0].style.transition = 'transform .5s cubic-bezier(.34,.8,.4,1)';
+    rows[0].style.transform = 'translateY(-26px) scale(1.03)';
+    await sleep(520);
+    rows[0].style.transform = 'translateY(-26px) translateX(-28px) scale(1.03)';
+    await sleep(440);
+    rows[0].style.transform = 'translateY(0) translateX(0)';
+    await sleep(440);
 
     el.style.transition = 'opacity .3s';
     el.style.opacity = '0';

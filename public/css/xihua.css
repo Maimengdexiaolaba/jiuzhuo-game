@@ -414,7 +414,7 @@
   border-radius: 20px;
   text-align: center;
   border: 1px solid var(--line);
-  background: linear-gradient(170deg, #163a2d, #0b241c);
+  background: linear-gradient(170deg, var(--modal-bg-1), var(--modal-bg-2));
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;

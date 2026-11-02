@@ -62,3 +62,78 @@
   .sm-reveal-cards .pcard--lg { --cw: 72px; }
   .sm-handinfo { font-size: 12px; padding: 3px 9px; }
 }
+
+/* 未公开 / 保密的牌面占位 */
+.st-hidden {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+}
+.sm-fight-sub { width: 100%; text-align: center; font-size: 12px; color: var(--text-dim); }
+
+/* ---------- 牌堆图形 + 发牌动画 ---------- */
+
+.sm-deck {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  width: 44px;
+  height: 60px;
+  z-index: 3;
+  pointer-events: none;
+}
+.sm-deck-card {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(45deg, rgba(212, 176, 106, .16) 0 3px, transparent 3px 6px),
+    linear-gradient(155deg, #2c5644, #143028);
+  border: 1px solid rgba(212, 176, 106, .34);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, .45);
+}
+.sm-deck-card:nth-child(1) { transform: translate(-5px, -5px) rotate(-4deg); opacity: .55; }
+.sm-deck-card:nth-child(2) { transform: translate(-2.5px, -2.5px) rotate(-2deg); opacity: .78; }
+.sm-deck-card:nth-child(3) { transform: translate(0, 0); }
+.sm-deck-count {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1a2416;
+  background: linear-gradient(150deg, #e2c887, #b99a55);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+}
+
+/* 飞行中的牌背 */
+.sm-fly-card {
+  position: fixed;
+  width: 34px;
+  height: 46px;
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(45deg, rgba(212, 176, 106, .18) 0 3px, transparent 3px 6px),
+    linear-gradient(155deg, #2c5644, #143028);
+  border: 1px solid rgba(212, 176, 106, .4);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, .55);
+  transform: translate(-50%, -50%);
+  transition: transform .58s cubic-bezier(.25, .7, .35, 1), opacity .58s ease-out;
+  pointer-events: none;
+  z-index: 130;
+}
+
+@media (max-width: 760px) {
+  .sm-deck { width: 34px; height: 46px; right: 8px; bottom: 8px; }
+  .sm-fly-card { width: 26px; height: 36px; }
+}

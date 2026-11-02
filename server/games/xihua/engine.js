@@ -141,22 +141,33 @@ export function startRound(state, players) {
 }
 
 function endRound(state, players) {
-  if (state.trickPile && state.trickPile.length) {
-    state.bottom.push(...state.trickPile);
-    state.trickPile = [];
-  }
   state.table = null;
   const lastSeat = activeSeats(state)[0];
 
-  if (lastSeat !== undefined && lastSeat >= 0) {
-    const remaining = state.hands[lastSeat].length;
-    if (state.mode === MODE_B) {
-      // 最后一位玩家的手牌并入其惩罚区
+  if (state.mode === MODE_B) {
+    // B 方案：桌面剩余的牌 + 最后一名的手牌，全部并入最后一名（输家）惩罚区
+    // 弃牌堆只应由发牌余数产生，打出的牌必须有归属
+    const tableCards = state.trickPile ? [...state.trickPile] : [];
+    state.trickPile = [];
+    if (lastSeat !== undefined && lastSeat >= 0) {
+      const remaining = state.hands[lastSeat].length;
       state.mergedRemaining = { seat: lastSeat, count: remaining };
-      state.penaltyZone[lastSeat].push(...state.hands[lastSeat]);
+      state.mergedTableCards = tableCards.length;
+      state.penaltyZone[lastSeat].push(...state.hands[lastSeat], ...tableCards);
       state.hands[lastSeat] = [];
-    } else if (remaining > 0) {
-      state.penalties[lastSeat] += remaining;
+    } else if (tableCards.length) {
+      // 极端情况：全员出完，桌上仍有牌 → 进弃牌堆
+      state.bottom.push(...tableCards);
+    }
+  } else {
+    // A 方案：桌面牌进弃牌堆；末位剩余手牌每张罚 1 杯
+    if (state.trickPile && state.trickPile.length) {
+      state.bottom.push(...state.trickPile);
+      state.trickPile = [];
+    }
+    if (lastSeat !== undefined && lastSeat >= 0) {
+      const remaining = state.hands[lastSeat].length;
+      if (remaining > 0) state.penalties[lastSeat] += remaining;
     }
   }
 
@@ -186,6 +197,10 @@ function computeResults(state, players) {
     if (state.mode === MODE_B) {
       const zoneCount = state.penaltyZone[seat].length;
       const cups = state.penaltyMode === 'one' ? zoneCount : Math.floor(zoneCount / 2);
+      // 拆分明细：收牌 / 末位剩余手牌 / 桌面剩余牌（后两者仅最后一名有）
+      const fromHand = merged !== null ? merged : 0;
+      const fromTable = merged !== null ? (state.mergedTableCards || 0) : 0;
+      const fromCollect = Math.max(0, zoneCount - fromHand - fromTable);
       return {
         seat,
         place: idx + 1,
@@ -193,6 +208,9 @@ function computeResults(state, players) {
         remaining,
         zoneCount,
         cups,
+        fromCollect,
+        fromHand,
+        fromTable,
         cupsWon: 0,
         cupsLost: cups,
         outcome: idx === 0 ? 'win' : 'lose',
@@ -383,11 +401,10 @@ export const actions = {
     const seat = actor.seat;
 
     if (state.mode === MODE_B) {
-      // 收走本轮所有人打出的牌到自己右下角惩罚区（过牌 2 只展示、不计罚）
-      const passCards = state.trickPile.filter((c) => isPassCard(c.rank));
-      const collected = state.trickPile.filter((c) => !isPassCard(c.rank));
+      // 收走本轮所有人打出的牌到自己右下角惩罚区
+      // 2/6 虽为功能牌，但打出后同样留在出牌堆里；管不住就全部收走、全部计入罚杯
+      const collected = state.trickPile.slice();
       const fromSeat = state.table.seat;
-      if (passCards.length) state.bottom.push(...passCards);
       state.penaltyZone[seat].push(...collected);
       state.trickPile = [];
       state.table = null;
@@ -645,5 +662,8 @@ export function serialize(state) {
     meta: cardMeta(state.mode),
     seq: state.seq,
     lastEvent: state.lastEvent,
+    // 最近一批事件：一次操作可能连续 emit 多事件（如 play→finished→settle），
+    // 前端按 seq 增量消费，避免只取 lastEvent 丢掉中间事件
+    events: state.log.slice(-12),
   };
 }

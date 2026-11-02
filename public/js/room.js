@@ -256,7 +256,9 @@ function render(App) {
   const newEv = game?.lastEvent && seqReady && game.lastEvent.seq > lastSeq
     ? game.lastEvent
     : null;
-  const hideHands = newEv?.type === 'deal';
+  // 发牌动画标记必须在构建 HTML 之前置上，否则这一帧会先闪出自己的手牌
+  if (newEv?.type === 'deal') dealAnimActive = true;
+  const hideHands = newEv?.type === 'deal' || dealAnimActive;
 
   const isSpectator = !!room.isSpectator;
 
@@ -441,22 +443,31 @@ function waitingSeatsHTML(room) {
 
 function wallHTML(game) {
   const total = game.wallTotal || 40;
-  const left = game.phase === 'shuffle' ? total : (game.wallLeft ?? 0);
-  const used = total - left;
-  const rows = [[], []];
-  for (let i = 0; i < total; i += 1) {
-    rows[i % 2].push(
-      `<span class="tile tile--xs ${i < used ? 'is-used' : 'tile--back'}" style="--tw:11px"></span>`
-    );
-  }
+  // 牌墙分上下两叠：第 1、3、5… 张在上层，第 2、4、6… 张在下层
+  const topTotal = Math.ceil(total / 2);
+  const botTotal = total - topTotal;
+  // 洗牌前牌墙还是满的（先砌好再洗），避免显示 0/40
+  const notShuffled = !game.phase || game.phase === 'shuffle';
+  const topLeft = notShuffled ? topTotal : (game.wallTopLeft ?? topTotal);
+  const botLeft = notShuffled ? botTotal : (game.wallBotLeft ?? botTotal);
+  const left = notShuffled ? total : (game.wallLeft ?? (topLeft + botLeft));
+
+  const stack = (count, totalN, cls) => {
+    let s = '';
+    for (let i = 0; i < totalN; i += 1) {
+      s += `<span class="tile tile--xs ${i < totalN - count ? 'is-used' : 'tile--back'}"></span>`;
+    }
+    return `<div class="wall-row ${cls}">${s}</div>`;
+  };
+
   return `
     <div class="wall-panel">
       <div class="wall-title">牌 墙</div>
-      <div class="wall-stacks">
-        <div class="wall-row">${rows[0].join('')}</div>
-        <div class="wall-row">${rows[1].join('')}</div>
+      <div class="wall-3d">
+        ${stack(topLeft, topTotal, 'wall-row--top')}
+        ${stack(botLeft, botTotal, 'wall-row--bot')}
       </div>
-      <div class="wall-count">剩余 <b>${left}</b> / ${total} 张</div>
+      <div class="wall-count">上 <b>${topLeft}</b> · 下 <b>${botLeft}</b><br />共 ${left} / ${total} 张</div>
     </div>`;
 }
 

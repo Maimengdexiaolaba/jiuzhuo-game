@@ -52,6 +52,33 @@ CREATE TABLE IF NOT EXISTS match_records (
 );
 
 CREATE INDEX IF NOT EXISTS idx_match_user_game ON match_records(user_id, game_id, id);
+
+-- 玩家背包：商城兑换的道具先入背包，使用后才生效
+CREATE TABLE IF NOT EXISTS inventory (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     TEXT NOT NULL,
+  item_id     TEXT NOT NULL,
+  quantity    INTEGER NOT NULL DEFAULT 1,
+  acquired_at INTEGER NOT NULL,
+  expires_at  INTEGER,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id);
+
+-- 商城商品（管理员可改价 / 上下架）
+CREATE TABLE IF NOT EXISTS shop_items (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  desc          TEXT NOT NULL DEFAULT '',
+  price         INTEGER NOT NULL DEFAULT 0,
+  category      TEXT NOT NULL DEFAULT 'misc',   -- cardFace / theme / bgm / sfx / misc
+  type          TEXT NOT NULL DEFAULT 'consumable', -- consumable / permanent / timed
+  duration_days INTEGER,                        -- type=timed 时的有效天数
+  asset         TEXT,                           -- 皮肤类商品对应的资源 key
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  sort_order    INTEGER NOT NULL DEFAULT 0
+);
 `);
 
 // 数据库迁移：为已有数据库补 points 字段（积分商城）
@@ -62,6 +89,34 @@ try {
   }
 } catch (err) {
   console.error('[db] 迁移 points 字段失败', err);
+}
+
+/** 默认皮肤配置：所有游戏默认「经典牌面 / 默认主题 / 默认音乐音效」 */
+export const DEFAULT_SKINS = {
+  cardFace: 'classic', // classic | xihua
+  theme: 'default', // default | warm
+  bgm: 'default',
+  sfx: 'default',
+};
+
+function normalizeSkins(raw) {
+  let parsed = {};
+  try {
+    parsed = raw ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+  return { ...DEFAULT_SKINS, ...parsed };
+}
+
+// 数据库迁移：为已有数据库补 skins 字段（皮肤系统）
+try {
+  const cols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name);
+  if (!cols.includes('skins')) {
+    db.exec(`ALTER TABLE users ADD COLUMN skins TEXT NOT NULL DEFAULT '${JSON.stringify(DEFAULT_SKINS)}'`);
+  }
+} catch (err) {
+  console.error('[db] 迁移 skins 字段失败', err);
 }
 
 const now = () => Date.now();
@@ -97,6 +152,7 @@ function toUser(row) {
     cupsWon: row.cups_won,
     cupsLost: row.cups_lost,
     points: row.points ?? 1000,
+    skins: normalizeSkins(row.skins),
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at,
     isGuest: false,
@@ -203,6 +259,7 @@ export const Users = {
   remove(id) {
     db.prepare('DELETE FROM match_records WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+    db.prepare('DELETE FROM inventory WHERE user_id = ?').run(id);
     db.prepare('DELETE FROM users WHERE id = ?').run(id);
   },
 
@@ -222,6 +279,19 @@ export const Users = {
     const v = Math.max(0, Math.round(Number(value) || 0));
     db.prepare('UPDATE users SET points = ? WHERE id = ?').run(v, id);
     return this.byId(id);
+  },
+
+  /** 读取皮肤配置 */
+  getSkins(id) {
+    const row = db.prepare('SELECT skins FROM users WHERE id = ?').get(id);
+    return normalizeSkins(row?.skins);
+  },
+
+  /** 更新皮肤配置（局部 patch，返回完整配置） */
+  setSkins(id, patch) {
+    const merged = normalizeSkins(JSON.stringify({ ...this.getSkins(id), ...(patch || {}) }));
+    db.prepare('UPDATE users SET skins = ? WHERE id = ?').run(JSON.stringify(merged), id);
+    return merged;
   },
 
   touchLogin(id) {
@@ -331,6 +401,199 @@ export const Matches = {
   },
 };
 
+/**
+ * 玩家背包：商城兑换的道具先入背包，玩家「使用」后才生效。
+ * - consumable（一次性）：使用后生效并消失
+ * - permanent（永久）：使用后登记为已拥有，长期生效（可切换）
+ * - timed（限时）：有 expires_at，到期失效
+ */
+export const Inventory = {
+  /** 放入背包（同道具且无过期时叠加数量） */
+  add(userId, itemId, quantity = 1, expiresAt = null) {
+    const qty = Math.max(1, Math.round(Number(quantity) || 1));
+    if (!expiresAt) {
+      const exist = db
+        .prepare('SELECT id, quantity FROM inventory WHERE user_id = ? AND item_id = ? AND expires_at IS NULL')
+        .get(userId, itemId);
+      if (exist) {
+        db.prepare('UPDATE inventory SET quantity = quantity + ? WHERE id = ?').run(qty, exist.id);
+        return this.list(userId);
+      }
+    }
+    db.prepare(
+      'INSERT INTO inventory (user_id, item_id, quantity, acquired_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(userId, itemId, qty, now(), expiresAt || null);
+    return this.list(userId);
+  },
+
+  /** 背包列表（附带商品信息与过期状态） */
+  list(userId) {
+    const items = ShopItems.map();
+    const rows = db
+      .prepare('SELECT * FROM inventory WHERE user_id = ? ORDER BY acquired_at DESC')
+      .all(userId);
+    const t = now();
+    return rows
+      .map((r) => {
+        const def = items[r.item_id] || {};
+        return {
+          itemId: r.item_id,
+          quantity: r.quantity,
+          acquiredAt: r.acquired_at,
+          expiresAt: r.expires_at,
+          expired: !!(r.expires_at && r.expires_at < t),
+          name: def.name || r.item_id,
+          desc: def.desc || '',
+          category: def.category || 'misc',
+          type: def.type || 'consumable',
+          asset: def.asset || null,
+        };
+      })
+      .filter((r) => !r.expired);
+  },
+
+  /** 取用一个（数量 -1，用尽则删除该行） */
+  take(userId, itemId) {
+    const row = db
+      .prepare('SELECT id, quantity FROM inventory WHERE user_id = ? AND item_id = ? ORDER BY id ASC')
+      .get(userId, itemId);
+    if (!row) return false;
+    if (row.quantity > 1) {
+      db.prepare('UPDATE inventory SET quantity = quantity - 1 WHERE id = ?').run(row.id);
+    } else {
+      db.prepare('DELETE FROM inventory WHERE id = ?').run(row.id);
+    }
+    return true;
+  },
+
+  /** 是否拥有某件（永久类用它判断） */
+  has(userId, itemId) {
+    const row = db
+      .prepare('SELECT 1 AS ok FROM inventory WHERE user_id = ? AND item_id = ? LIMIT 1')
+      .get(userId, itemId);
+    return !!row;
+  },
+
+  clearFor(userId) {
+    db.prepare('DELETE FROM inventory WHERE user_id = ?').run(userId);
+  },
+};
+
+/** 商城商品（存库，管理员可改价 / 上下架） */
+export const ShopItems = {
+  list({ onlyEnabled = true } = {}) {
+    const sql = onlyEnabled
+      ? 'SELECT * FROM shop_items WHERE enabled = 1 ORDER BY sort_order ASC, price ASC'
+      : 'SELECT * FROM shop_items ORDER BY sort_order ASC, price ASC';
+    return db.prepare(sql).all().map((r) => ({
+      id: r.id,
+      name: r.name,
+      desc: r.desc,
+      price: r.price,
+      category: r.category,
+      type: r.type,
+      durationDays: r.duration_days,
+      asset: r.asset,
+      enabled: !!r.enabled,
+    }));
+  },
+
+  map() {
+    const out = {};
+    for (const it of this.list({ onlyEnabled: false })) out[it.id] = it;
+    return out;
+  },
+
+  byId(id) {
+    const r = db.prepare('SELECT * FROM shop_items WHERE id = ?').get(id);
+    if (!r) return null;
+    return {
+      id: r.id,
+      name: r.name,
+      desc: r.desc,
+      price: r.price,
+      category: r.category,
+      type: r.type,
+      durationDays: r.duration_days,
+      asset: r.asset,
+      enabled: !!r.enabled,
+    };
+  },
+
+  /** 管理员改价 / 上下架 / 改名 */
+  update(id, patch = {}) {
+    const cur = this.byId(id);
+    if (!cur) return null;
+    const fields = [];
+    const values = [];
+    if (patch.price !== undefined) {
+      fields.push('price = ?');
+      values.push(Math.max(0, Math.round(Number(patch.price) || 0)));
+    }
+    if (patch.enabled !== undefined) {
+      fields.push('enabled = ?');
+      values.push(patch.enabled ? 1 : 0);
+    }
+    if (patch.name !== undefined) {
+      fields.push('name = ?');
+      values.push(String(patch.name).slice(0, 32));
+    }
+    if (patch.desc !== undefined) {
+      fields.push('desc = ?');
+      values.push(String(patch.desc).slice(0, 120));
+    }
+    if (!fields.length) return cur;
+    values.push(id);
+    db.prepare(`UPDATE shop_items SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return this.byId(id);
+  },
+
+  /** 初始化默认商品（仅当表为空时写入） */
+  seed() {
+    const count = db.prepare('SELECT COUNT(*) AS c FROM shop_items').get().c;
+    if (count > 0) return;
+    const defaults = [
+      {
+        id: 'clear_stats',
+        name: '胜率清零卡',
+        desc: '使用后清空你的百场胜率记录（所有游戏）',
+        price: 50,
+        category: 'misc',
+        type: 'consumable',
+        asset: null,
+        sort: 10,
+      },
+      {
+        id: 'card_face_xihua',
+        name: '西游记牌面',
+        desc: '西游记角色插画牌面，购买后可在设置中切换，永久有效',
+        price: 100,
+        category: 'cardFace',
+        type: 'permanent',
+        asset: 'xihua',
+        sort: 20,
+      },
+      {
+        id: 'theme_warm',
+        name: '暖阳主题',
+        desc: '暖橙 / 木质色调主题皮肤，购买后可在设置中切换，永久有效',
+        price: 120,
+        category: 'theme',
+        type: 'permanent',
+        asset: 'warm',
+        sort: 30,
+      },
+    ];
+    const stmt = db.prepare(
+      `INSERT INTO shop_items (id, name, desc, price, category, type, asset, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const d of defaults) {
+      stmt.run(d.id, d.name, d.desc, d.price, d.category, d.type, d.asset, d.sort);
+    }
+  },
+};
+
 export const Sessions = {
   create(userId) {
     const token = crypto.randomBytes(24).toString('hex');
@@ -356,6 +619,7 @@ export const Sessions = {
 };
 
 export function seedAdmin() {
+  ShopItems.seed();
   const exists = Users.byUsername(ADMIN_USERNAME);
   if (!exists) {
     Users.create({

@@ -1,7 +1,9 @@
 import { toast, closeAllModals, escapeHTML } from './ui.js';
 import { openStatsModal } from './stats.js';
 import { openShopModal } from './shop.js';
-import { setAudioEnabled, setBgmMood, isBgmPlaying, getBgmMood } from './audio.js';
+import { openSettingsModal } from './settings.js';
+import { setSfxEnabled, setBgmEnabled, setBgmMood, isBgmPlaying, getBgmMood, isBgmEnabled, isSfxEnabled } from './audio.js';
+import { setCardFace } from './playcards.js';
 import { mountAuth } from './auth.js';
 import { mountLobby } from './lobby.js';
 import { mountRoom } from './room.js';
@@ -49,9 +51,31 @@ const App = {
     view: 'auth',
     pendingRoom: localStorage.getItem(ROOM_KEY) || null,
     restored: false,
-    soundOn: localStorage.getItem('jz_sound') !== '0',
+    bgmOn: localStorage.getItem('jz_bgm') !== '0',
+    sfxOn: localStorage.getItem('jz_sfx') !== '0',
   },
   renderers: {},
+  /** 应用用户皮肤：主题 class + 牌面素材（可传入最新 skins，否则读 user.skins） */
+  applySkins(skinsOverride) {
+    const skins = skinsOverride || App.state.user?.skins || {};
+    if (skinsOverride && App.state.user) App.state.user.skins = skinsOverride;
+    document.body.classList.toggle('theme-warm', skins.theme === 'warm');
+    setCardFace(skins.cardFace || 'classic');
+  },
+  /** 保存音频开关到本地 */
+  persistAudioFlags() {
+    localStorage.setItem('jz_bgm', isBgmEnabled() ? '1' : '0');
+    localStorage.setItem('jz_sfx', isSfxEnabled() ? '1' : '0');
+    App.state.bgmOn = isBgmEnabled();
+    App.state.sfxOn = isSfxEnabled();
+    App.renderTopbar();
+  },
+  openShop() {
+    openShopModal(App);
+  },
+  openSettings() {
+    openSettingsModal(App);
+  },
   call(event, payload = {}) {
     return new Promise((resolve) => {
       let settled = false;
@@ -121,7 +145,8 @@ function renderTopbar() {
     ${user.isGuest ? '' : '<button class="btn btn-ghost btn-sm" id="btn-my-stats"><span class="lf">我的战绩</span><span class="ls">战绩</span></button>'}
     ${user.isGuest ? '' : '<button class="btn btn-ghost btn-sm" id="btn-shop"><span class="lf">积分商城</span><span class="ls">商城</span></button>'}
     ${user.isAdmin ? '<button class="btn btn-ghost btn-sm" id="btn-goto-admin"><span class="lf">管理后台</span><span class="ls">后台</span></button>' : ''}
-    <button class="btn btn-ghost btn-sm" id="btn-sound" title="音效 / 背景音乐开关">${App.state.soundOn ? '🔊' : '🔇'}</button>
+    <button class="btn btn-ghost btn-sm" id="btn-settings" title="设置：牌面 / 主题 / 音频 / 背包"><span class="lf">⚙️ 设置</span><span class="ls">⚙️</span></button>
+    <button class="btn btn-ghost btn-sm" id="btn-sound" title="快速静音（背景音乐 + 音效）">${(App.state.bgmOn || App.state.sfxOn) ? '🔊' : '🔇'}</button>
     <div class="user-chip">
       <span class="avatar">${escapeHTML((user.displayName || '客').slice(0, 1))}</span>
       <span>
@@ -135,11 +160,14 @@ function renderTopbar() {
   host.querySelector('#btn-goto-admin')?.addEventListener('click', () => App.navigate('admin'));
   host.querySelector('#btn-my-stats')?.addEventListener('click', () => openStatsModal(App));
   host.querySelector('#btn-shop')?.addEventListener('click', () => openShopModal(App));
+  host.querySelector('#btn-settings')?.addEventListener('click', () => openSettingsModal(App));
   host.querySelector('#btn-sound')?.addEventListener('click', () => {
-    App.state.soundOn = !App.state.soundOn;
-    localStorage.setItem('jz_sound', App.state.soundOn ? '1' : '0');
-    setAudioEnabled(App.state.soundOn);
-    App.renderTopbar();
+    // 快速静音：两者都开时全部关掉，否则全部打开
+    const allOn = App.state.bgmOn && App.state.sfxOn;
+    const next = !allOn;
+    setBgmEnabled(next);
+    setSfxEnabled(next);
+    App.persistAudioFlags();
   });
 }
 
@@ -160,7 +188,7 @@ function pickHeroGames(all) {
 function renderHeroGames() {
   const host = document.getElementById('hero-games');
   if (!host) return;
-  const games = App.state.games || [];
+  const games = (App.state.games || []).filter((g) => g.enabled !== false);
 
   // 超过 3 款时每次进页面随机挑 3 款展示，避免首页越堆越长
   if (!App.state.heroPicks || App.state.heroPicks.length !== Math.min(games.length, HERO_LIMIT)) {
@@ -209,7 +237,10 @@ function bindSocket() {
         App.navigate('auth');
         return;
       }
+      if (res.user) App.state.user = res.user;
       App.state.restored = true;
+      App.applySkins();
+      App.renderTopbar();
     } else if (App.state.user && App.state.room) {
       // 断线重连后回到房间
       const res = await App.call('room:join', { roomId: App.state.room.id });
@@ -233,6 +264,7 @@ function bindSocket() {
       writeToken(payload.token);
     }
     App.state.restored = true;
+    App.applySkins();
     App.renderTopbar();
     if (first) enterLobby();
   });
@@ -304,7 +336,9 @@ mountAdmin(App);
 
 bindSocket();
 renderHeroGames();
-setAudioEnabled(App.state.soundOn);
+setBgmEnabled(App.state.bgmOn);
+setSfxEnabled(App.state.sfxOn);
+App.applySkins();
 App.navigate('auth');
 
 // 若本地有登录态，等 restore 结果；无则展示登录页

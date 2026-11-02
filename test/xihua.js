@@ -379,7 +379,7 @@ test('A 方案：出 2 过牌后仍留在桌面，由下家继续管原来那手
   assert.ok(st.trickPile.some((c) => c.rank === 2), '牌堆里有那张 2');
 });
 
-test('B 方案：收牌时 2 只展示、不计入惩罚区', () => {
+test('B 方案：收牌时 2 也计入惩罚区（功能牌同样留在出牌堆）', () => {
   const players = mkPlayers(3);
   const st = xihua.createState({ playerCount: 3, config: { mode: MODE_B, penalty: 'one' } });
   st._players = players;
@@ -401,8 +401,8 @@ test('B 方案：收牌时 2 只展示、不计入惩罚区', () => {
   const bottomBefore = st.bottom.length;
   r = engine.applyAction(st, players, 2, 'pass', {});
   assert.ok(r.ok, r.error);
-  assert.strictEqual(st.penaltyZone[2].length, 1, '惩罚区只收 8，不含过牌 2');
-  assert.strictEqual(st.bottom.length, bottomBefore + 1, '2 进弃牌堆');
+  assert.strictEqual(st.penaltyZone[2].length, 2, '惩罚区收 8 和 2 两张');
+  assert.strictEqual(st.bottom.length, bottomBefore, '弃牌堆不增加（牌必须有归属）');
 });
 
 console.log('─'.repeat(50));

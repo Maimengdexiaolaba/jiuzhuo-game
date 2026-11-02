@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { PORT, HOST, PUBLIC_DIR, GUEST_TTL } from './config.js';
-import { Users, Sessions, Matches, seedAdmin } from './db.js';
+import { Users, Sessions, Matches, seedAdmin, Inventory, ShopItems } from './db.js';
 import { listGames, getGame } from './games/registry.js';
 import { RoomManager } from './rooms.js';
 
@@ -79,6 +79,8 @@ function publicUser(user) {
     isAdmin: !!user.isAdmin,
     isGuest: !!user.isGuest,
     prefs: user.prefs,
+    points: user.points ?? 1000,
+    skins: user.skins || { cardFace: 'classic', theme: 'default', bgm: 'default', sfx: 'default' },
   };
 }
 
@@ -338,45 +340,169 @@ io.on('connection', (socket) => {
 
   /* ---------------- 积分商城 ---------------- */
 
-  // 商城商品清单（首期仅胜率清零卡，后续可扩展牌背/主题/皮肤等）
-  const SHOP_ITEMS = [
-    {
-      id: 'clear_stats',
-      name: '胜率清零卡',
-      price: 50,
-      desc: '清空你的百场胜率记录（所有游戏）',
-      kind: 'clearStats',
-    },
-  ];
+  // 商城 / 背包 / 皮肤
+  // 商品定义存库（shop_items），管理员可改价、上下架
 
   socket.on('shop:list', (payload, ack) => {
     const user = socket.data.user;
     if (!user) return ack?.({ error: '请先登录' });
     if (user.isGuest) return ack?.({ ok: true, guest: true, points: 0, items: [] });
     const u = Users.byId(user.id) || user;
-    ack?.({ ok: true, points: u.points ?? 1000, items: SHOP_ITEMS });
+    const owned = new Set(Inventory.list(user.id).map((i) => i.itemId));
+    const items = ShopItems.list({ onlyEnabled: true }).map((it) => ({
+      ...it,
+      owned: owned.has(it.id),
+    }));
+    ack?.({
+      ok: true,
+      points: u.points ?? 1000,
+      items,
+      skins: Users.getSkins(user.id),
+    });
   });
 
+  // 兑换：扣积分 → 放入背包（不立即生效，需玩家在背包里使用）
   socket.on('shop:buy', (payload, ack) => {
     const user = socket.data.user;
     if (!user) return ack?.({ error: '请先登录' });
     if (user.isGuest) return ack?.({ error: '游客无法使用商城，请注册登录' });
-    const item = SHOP_ITEMS.find((i) => i.id === payload?.itemId);
-    if (!item) return ack?.({ error: '商品不存在' });
+    const item = ShopItems.byId(String(payload?.itemId || ''));
+    if (!item || !item.enabled) return ack?.({ error: '商品不存在或已下架' });
     const u = Users.byId(user.id);
     if (!u) return ack?.({ error: '账号不存在' });
     if ((u.points ?? 1000) < item.price) return ack?.({ error: '积分不足' });
 
-    // 扣积分
-    Users.addPoints(user.id, -item.price);
-
-    // 执行商品效果
-    if (item.kind === 'clearStats') {
-      Matches.clearFor(user.id);
+    // 永久类商品：已拥有则不允许重复购买
+    if (item.type === 'permanent' && Inventory.has(user.id, item.id)) {
+      return ack?.({ error: '你已拥有该商品' });
     }
 
+    Users.addPoints(user.id, -item.price);
+    const expiresAt = item.type === 'timed' && item.durationDays
+      ? Date.now() + item.durationDays * 86400000
+      : null;
+    Inventory.add(user.id, item.id, 1, expiresAt);
+
     const fresh = Users.byId(user.id);
-    ack?.({ ok: true, points: fresh.points ?? 0, item });
+    ack?.({
+      ok: true,
+      points: fresh.points ?? 0,
+      item,
+      inventory: Inventory.list(user.id),
+    });
+  });
+
+  socket.on('inventory:list', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    if (user.isGuest) return ack?.({ ok: true, items: [], skins: { cardFace: 'classic', theme: 'default', bgm: 'default', sfx: 'default' } });
+    ack?.({
+      ok: true,
+      items: Inventory.list(user.id),
+      skins: Users.getSkins(user.id),
+      points: Users.byId(user.id)?.points ?? 0,
+    });
+  });
+
+  // 使用背包道具
+  socket.on('inventory:use', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    if (user.isGuest) return ack?.({ error: '游客无法使用道具' });
+    const itemId = String(payload?.itemId || '');
+    const item = ShopItems.byId(itemId);
+    if (!item) return ack?.({ error: '道具不存在' });
+    if (!Inventory.has(user.id, itemId)) return ack?.({ error: '背包里没有该道具' });
+
+    // 永久类：使用 = 切换为当前皮肤（不消耗）
+    if (item.type === 'permanent') {
+      if (item.category === 'misc' || !item.asset) {
+        return ack?.({ error: '该道具不支持使用' });
+      }
+      const skins = Users.setSkins(user.id, { [item.category]: item.asset });
+      return ack?.({
+        ok: true,
+        message: `已切换为「${item.name}」`,
+        skins,
+        inventory: Inventory.list(user.id),
+      });
+    }
+
+    // 一次性：执行效果 + 消耗
+    if (item.id === 'clear_stats') {
+      Matches.clearFor(user.id);
+    }
+    Inventory.take(user.id, itemId);
+    ack?.({
+      ok: true,
+      message: `「${item.name}」已使用`,
+      skins: Users.getSkins(user.id),
+      inventory: Inventory.list(user.id),
+    });
+  });
+
+  // 读取 / 设置皮肤（设置页直接调用；校验是否拥有）
+  socket.on('skins:get', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    const skins = user.isGuest
+      ? { cardFace: 'classic', theme: 'default', bgm: 'default', sfx: 'default' }
+      : Users.getSkins(user.id);
+    const owned = user.isGuest ? [] : Inventory.list(user.id).map((i) => i.itemId);
+    ack?.({ ok: true, skins, owned });
+  });
+
+  socket.on('skins:set', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user) return ack?.({ error: '请先登录' });
+    const category = String(payload?.category || '');
+    const value = String(payload?.value || '');
+    const ALLOWED = {
+      cardFace: ['classic', 'xihua'],
+      theme: ['default', 'warm'],
+      bgm: ['default'],
+      sfx: ['default'],
+    };
+    if (!ALLOWED[category]) return ack?.({ error: '未知的皮肤分类' });
+    if (!ALLOWED[category].includes(value)) return ack?.({ error: '未知的皮肤选项' });
+
+    // 非默认项需要拥有对应商品
+    const FREE = new Set(['classic', 'default']);
+    if (!FREE.has(value)) {
+      if (user.isGuest) return ack?.({ error: '游客无法切换皮肤，请注册登录' });
+      const ownedItem = ShopItems.list({ onlyEnabled: false }).find(
+        (it) => it.category === category && it.asset === value
+      );
+      if (!ownedItem) return ack?.({ error: '皮肤不存在' });
+      if (!Inventory.has(user.id, ownedItem.id)) {
+        return ack?.({ error: '你还未拥有该皮肤，请先到商城兑换' });
+      }
+    }
+    const skins = user.isGuest
+      ? { cardFace: 'classic', theme: 'default', bgm: 'default', sfx: 'default' }
+      : Users.setSkins(user.id, { [category]: value });
+    ack?.({ ok: true, skins });
+  });
+
+  // 管理员：商城商品列表（含下架）/ 改价 / 上下架
+  socket.on('admin:shop', (payload, ack) => {
+    const user = socket.data.user;
+    if (!user || !user.isAdmin) return ack?.({ error: '仅管理员可操作' });
+    const op = payload?.op;
+    if (op === 'list') {
+      return ack?.({ ok: true, items: ShopItems.list({ onlyEnabled: false }) });
+    }
+    if (op === 'update') {
+      const updated = ShopItems.update(String(payload?.itemId || ''), {
+        price: payload?.price,
+        enabled: payload?.enabled,
+        name: payload?.name,
+        desc: payload?.desc,
+      });
+      if (!updated) return ack?.({ error: '商品不存在' });
+      return ack?.({ ok: true, item: updated, items: ShopItems.list({ onlyEnabled: false }) });
+    }
+    ack?.({ error: '未知操作' });
   });
 
   // 管理员：调整玩家积分 / 清除胜率
@@ -751,7 +877,7 @@ app.use((req, res, next) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────');
-  console.log('  酒桌游戏 · 推饼子');
+  console.log('  酒桌游戏 · 推饼子 / 纸牌西游记 / 超级梦幻');
   console.log(`  服务已启动: http://${HOST}:${PORT}`);
   console.log('  局域网访问: http://<本机IP>:9876');
   console.log('──────────────────────────────────────────');

@@ -152,25 +152,54 @@ const module = {
     return parts;
   },
 
-  rulesSummary(cfg) {
-    const c = this.normalizeConfig(cfg);
-    const orderText = c.orderRule === 'flushFirst'
-      ? '天炸 > 炸弹 > 同花顺 > 金花 > 顺子 > 单牌'
-      : '天炸 > 炸弹 > 同花顺 > 顺子 > 金花 > 单牌';
+  rulesSummary() {
     return [
-      { title: '牌型', body: orderText + '（无对子）' },
-      { title: '炸弹', body: c.withJoker
-        ? '真炸=两张同点；假炸=王+牌；天炸=大王+小王（最高）。' + (c.bombRule === 'realFirst' ? '真炸>假炸' : '按点数比，同点庄家胜')
-        : '两张同点即炸弹' },
-      { title: '顺子/金花', body: '相邻或隔一张为顺子，同色为金花，同色且相邻/隔一为同花顺' },
-      { title: 'A', body: c.ace23 ? 'A 可当 1 组成 A23，也可组成 QKA' : 'A 只能组成 QKA' },
-      { title: '235', body: c.eatBomb235 ? '手牌 2、5 不同色可吃炸弹（不吃天炸），否则算单牌' : '235 无特殊，仅按单牌算' },
-      { title: '叫酒', body: c.betMax === 'g2'
-        ? '干 2：全场默认 2 杯，跳过逐人叫酒'
-        : `从庄家下家顺时针叫 1~${c.betMax} 杯；首家叫 2 或 3 杯时尾家可锁全场` },
-      { title: '开牌', body: '庄家至少开一家' },
-      { title: '换牌', body: c.dealerChange === 'none' ? '庄家不能换牌' : `庄家整个任期最多换${c.dealerChange === 'once' ? '1' : '2'}手，每次两张全换喝 1 杯` },
-      { title: '闷牌', body: c.allowBlind ? '发牌前可声明闷牌；不服结算：闲家闷+庄家看牌时庄家输喝 4 倍' : '本局不允许闷牌' },
+      {
+        title: '牌型',
+        body: '天炸 > 炸弹 > 同花顺 > 顺子 > 金花 > 单牌（无对子）；顺子与金花的先后可切换',
+      },
+      {
+        title: '炸弹',
+        body: '真炸 = 两张同点；假炸 = 王 + 任意牌；天炸 = 大王 + 小王（最高）'
+          + '（真炸优先或按点数比，可切换）',
+      },
+      {
+        title: '顺子 / 金花',
+        body: '相邻或隔一张为顺子，同色为金花，同色且成顺为同花顺。'
+          + '顺子先比顶牌，顶牌相同再比「想象的那张牌」——想象牌越小越强（如 KA > QA > QK）',
+      },
+      { title: 'A', body: 'A 可当 1 组成 A23，也可组成 QKA（可关闭）' },
+      {
+        title: '235',
+        body: '手牌 2、5 不同色可吃炸弹（不吃天炸），遇其他牌按单牌 5 算（可关闭）',
+      },
+      {
+        title: '叫酒',
+        body: '从庄家下家顺时针叫 1~N 杯（上限可选 2 杯 / 3 杯 / 干2）；'
+          + '首家叫 2 或 3 杯时，尾家可锁全场',
+      },
+      {
+        title: '锁牌',
+        body: '整场限 1 次；锁后全场按该杯数。庄家同时赢首尾两家可解锁，解锁后本场不能再锁',
+      },
+      {
+        title: '闷牌',
+        body: '发牌前可声明闷牌，不看自己的牌；每人每场限闷 3 次（可关闭）',
+      },
+      {
+        title: '换牌',
+        body: '庄家闷牌不能换；庄家看牌后可换自己的两张手牌，每次喝 1 杯，'
+          + '整个任期最多 1~2 手（可关闭）',
+      },
+      {
+        title: '开牌',
+        body: '庄家至少开一家；被开的闲家可选「服」（喝所押杯数）或「不服」（比牌，输者双倍）',
+      },
+      {
+        title: '亮牌',
+        body: '闷牌比牌只出输赢不亮牌，牌面留到本庄统计统一展示；'
+          + '双方都看牌时亮牌即时展示。闲家闷 + 庄家已看牌，庄家输按 4 倍',
+      },
     ];
   },
 
@@ -193,6 +222,7 @@ const module = {
   waitingSeats: engine.waitingSeats,
   pendingBotActions: engine.pendingBotActions,
   serialize: engine.serialize,
+  hintsFor: engine.hintsFor,
 
   /** 两张手牌的牌型摘要，供前端展示 */
   evalHand(hand, config) {

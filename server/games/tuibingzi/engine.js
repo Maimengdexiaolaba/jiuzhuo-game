@@ -41,7 +41,10 @@ export function createState({ playerCount, config }) {
     dealerSeat: 0,
     bigRound: 1,
     roundNo: 0,
-    wall: [],
+    // 牌墙分上下两叠：洗好的牌奇偶交替拆分（上层=第1、3、5…张，下层=第2、4、6…张）
+    // 每家抓牌「上层一张 + 下层一张」，切牌只切上层 → 上层牌序被真正打乱，切牌才有意义
+    wallTop: [],
+    wallBot: [],
     wallTotal: DECK_SIZE,
     hands: Array.from({ length: playerCount }, () => []),
     bets: Array.from({ length: playerCount }, () => 0),
@@ -97,6 +100,24 @@ function idleSeats(state, players) {
 export function cutIndexFromDice(total, wallLength) {
   const raw = (total * 4 + 1) % wallLength;
   return raw === 0 ? 1 : raw;
+}
+
+/** 牌墙剩余总张数（上下两叠合计） */
+function wallLeft(state) {
+  return state.wallTop.length + state.wallBot.length;
+}
+
+/** 是否够发一局：每家需要「上层一张 + 下层一张」 */
+function canDealRound(state) {
+  return state.wallTop.length >= state.playerCount && state.wallBot.length >= state.playerCount;
+}
+
+/** 洗好的牌按奇偶交替拆成上下两叠：第 1、3、5… 张上层，第 2、4、6… 张下层 */
+function splitWall(deck) {
+  const top = [];
+  const bot = [];
+  deck.forEach((card, i) => (i % 2 === 0 ? top : bot).push(card));
+  return { top, bot };
 }
 
 function allPlayersBet(state) {
@@ -198,7 +219,7 @@ function buildHistoryEntry(state) {
     dealDice: state.dice.deal ? { ...state.dice.deal } : null,
     firstSeat: state.firstSeat,
     cut: { ...state.cut },
-    wallLeft: state.wall.length,
+    wallLeft: wallLeft(state),
     config: { ...state.config },
     results: state.results,
   };
@@ -211,14 +232,17 @@ export const actions = {
     if (state.phase !== PHASE.SHUFFLE) return fail('当前阶段不能洗牌');
     if (seat !== state.dealerSeat) return fail('只有庄家可以洗牌');
 
-    state.wall = shuffleDeck(buildDeck());
-    state.wallTotal = state.wall.length;
+    const deck = shuffleDeck(buildDeck());
+    const { top, bot } = splitWall(deck);
+    state.wallTop = top;
+    state.wallBot = bot;
+    state.wallTotal = deck.length;
     state.cut = { done: false, bySeat: null, index: 0, skipped: false };
     state.dice = { cut: null, deal: null };
     state.roundNo = 1;
     resetRoundState(state);
     state.phase = PHASE.CUT_DICE;
-    emit(state, { type: 'shuffle', wall: state.wall.map((c) => c.id) });
+    emit(state, { type: 'shuffle', wall: deck.map((c) => c.id) });
     return ok();
   },
 
@@ -261,8 +285,9 @@ export const actions = {
     if (actor.seat !== state.cut.bySeat) return fail('只有被点中的玩家可以切牌');
     if (actor.seat === state.dealerSeat) return fail('庄家无需切牌');
 
-    const index = cutIndexFromDice(state.dice.cut?.total || 7, state.wall.length);
-    state.wall = state.wall.slice(index).concat(state.wall.slice(0, index));
+    // 只切上层：上层从切点分成两段、前后互换，上层牌序被真正打乱；下叠完全不动
+    const index = cutIndexFromDice(state.dice.cut?.total || 7, state.wallTop.length || 1);
+    state.wallTop = state.wallTop.slice(index).concat(state.wallTop.slice(0, index));
     state.cut.done = true;
     state.cut.skipped = false;
     state.cut.index = index;
@@ -308,7 +333,7 @@ export const actions = {
   rollDealDice(state, players, actor) {
     if (state.phase !== PHASE.DEAL_DICE) return fail('当前阶段不能掷骰');
     if (actor.seat !== state.dealerSeat) return fail('只有庄家可以掷发牌骰');
-    if (state.wall.length < state.playerCount * 2) return fail('牌墙剩余牌数不足，本庄应结束');
+    if (!canDealRound(state)) return fail('牌墙剩余牌数不足，本庄应结束');
 
     const dice = rollTwoDice();
     state.dice.deal = dice;
@@ -321,7 +346,8 @@ export const actions = {
     }
 
     for (const seat of order) {
-      const hand = [state.wall.shift(), state.wall.shift()];
+      // 每家先抓上层一张、再抓下层一张
+      const hand = [state.wallTop.shift(), state.wallBot.shift()];
       hand.sort((a, b) => (a.r === 0 ? 100 : a.r) - (b.r === 0 ? 100 : b.r));
       state.hands[seat] = hand;
     }
@@ -334,7 +360,7 @@ export const actions = {
       firstSeat,
       firstName: players.find((p) => p.seat === firstSeat)?.name || '',
       order,
-      wallLeft: state.wall.length,
+      wallLeft: wallLeft(state),
     });
     return ok();
   },
@@ -373,15 +399,14 @@ export const actions = {
     if (state.phase !== PHASE.SETTLE) return fail('当前阶段不能开始下一局');
     if (actor.seat !== state.dealerSeat) return fail('只有庄家可以开始下一局');
 
-    const need = state.playerCount * 2;
-    if (state.wall.length < need) {
+    if (!canDealRound(state)) {
       state.phase = PHASE.BIG_END;
       state.summaryReady = Array.from({ length: state.playerCount }, () => false);
       emit(state, {
         type: 'bigEnd',
         rounds: state.history.length,
         totals: state.bigTotals,
-        wallLeft: state.wall.length,
+        wallLeft: wallLeft(state),
       });
       return ok();
     }
@@ -430,7 +455,8 @@ export const actions = {
     state.summaryReady = Array.from({ length: state.playerCount }, () => false);
     state.cut = { done: false, bySeat: null, index: 0, skipped: false };
     state.dice = { cut: null, deal: null };
-    state.wall = [];
+    state.wallTop = [];
+    state.wallBot = [];
     resetRoundState(state);
     state.phase = PHASE.SHUFFLE;
 
@@ -575,7 +601,7 @@ export function serialize(state, playerCount) {
     dealerSeat: state.dealerSeat,
     bigRound: state.bigRound,
     roundNo: state.roundNo,
-    wallLeft: state.wall.length,
+    wallLeft: wallLeft(state),
     wallTotal: state.wallTotal,
     cut: state.cut,
     cutDice: state.dice.cut,

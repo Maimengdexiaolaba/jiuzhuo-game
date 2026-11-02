@@ -1,0 +1,109 @@
+/* ============ 设置页 / 背包 / 商城标签 ============ */
+
+.settings-wrap { display: flex; flex-direction: column; gap: 16px; }
+
+.settings-section {
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--panel);
+}
+
+.settings-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--gold-strong);
+  letter-spacing: .02em;
+}
+.settings-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 3px 0 12px;
+}
+
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.settings-switch-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.sw-label { font-size: 13.5px; }
+.sw-desc { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+.skin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+
+.skin-opt {
+  text-align: left;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, .02);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .16s, background .16s, transform .12s;
+}
+.skin-opt:hover { border-color: var(--gold-dim); transform: translateY(-1px); }
+.skin-opt.is-on {
+  border-color: var(--gold);
+  background: rgba(212, 176, 106, .14);
+  box-shadow: 0 0 0 1px var(--gold-dim) inset;
+}
+.skin-opt.is-locked { opacity: .5; cursor: not-allowed; }
+.skin-opt.is-locked:hover { transform: none; border-color: var(--line-soft); }
+.skin-opt-name { display: block; font-size: 13px; font-weight: 600; }
+.skin-opt-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+
+.inv-list { display: flex; flex-direction: column; gap: 8px; }
+.inv-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .03);
+  border: 1px solid var(--line-soft);
+}
+.inv-icon { font-size: 21px; line-height: 1; flex-shrink: 0; }
+.inv-body { flex: 1; min-width: 0; }
+.inv-name { font-size: 13px; font-weight: 600; }
+.inv-desc { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.inv-tag { font-size: 10.5px; color: var(--gold-dim); margin-top: 3px; letter-spacing: .02em; }
+.inv-side { flex-shrink: 0; }
+.inv-empty { font-size: 12.5px; color: var(--muted); padding: 6px 0 2px; }
+.inv-empty a { color: var(--gold-strong); text-decoration: underline; }
+
+/* 商城分类 / 类型标签 */
+.shop-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--gold-strong);
+  background: rgba(212, 176, 106, .14);
+  border: 1px solid var(--gold-dim);
+  vertical-align: middle;
+}
+.shop-tag.sub {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, .04);
+  border-color: var(--line-soft);
+}
+.shop-item.is-owned { opacity: .72; }
+.shop-empty { font-size: 13px; color: var(--muted); padding: 18px 0; text-align: center; }
+
+@media (max-width: 760px) {
+  .settings-section { padding: 12px; }
+  .skin-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .skin-opt { padding: 9px 10px; }
+  .inv-item { gap: 8px; padding: 8px 9px; }
+  .inv-desc { display: none; }
+}
