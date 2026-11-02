@@ -80,10 +80,10 @@ function handleXihuaEvents(g) {
   } else if (ev.type === 'passCard') {
     sfx.play();
     const roleKey = ROLE_KEY[ev.rank];
-    if (roleKey) speakXihuaPlay(1, roleKey);
+    if (roleKey) speakXihuaPlay(ev.count || 1, roleKey);
   } else if (ev.type === 'turnback') {
     sfx.cut();
-    speakXihuaPlay(1, 'bailongma');
+    speakXihuaPlay(ev.count || 1, 'bailongma');
   } else if (ev.type === 'collect') {
     sfx.penalty();
   } else if (ev.type === 'penalty') {

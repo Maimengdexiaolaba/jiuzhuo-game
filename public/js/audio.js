@@ -166,10 +166,10 @@ export function stopVoice() {
   activeSources.clear();
 }
 
-/* 西游记：数量 + 角色名拼接播报（衔接无缝，像一句话） */
+/* 西游记：完整播报「数量+量词+角色」单条语音（如「一只猪八戒」），连续无停顿 */
 export function speakXihuaPlay(count, roleKey) {
   const num = Math.min(4, Math.max(1, count));
-  speak([`num_${num}`, `xh_${roleKey}`]);
+  speak([`xh_${num}_${roleKey}`]);
 }
 
 export function speakXihuaPass() {
