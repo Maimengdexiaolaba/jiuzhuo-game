@@ -8,8 +8,12 @@ import { PORT, HOST, PUBLIC_DIR, GUEST_TTL } from './config.js';
 import { Users, Sessions, Matches, seedAdmin, Inventory, ShopItems } from './db.js';
 import { listGames, getGame } from './games/registry.js';
 import { RoomManager } from './rooms.js';
+import { checkUpdate, prepareUpdate, triggerRebuild, currentVersion } from './docker.js';
 
 seedAdmin();
+
+// 一键更新互斥锁（模块级，所有连接共用）
+let updateBusy = false;
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -503,6 +507,48 @@ io.on('connection', (socket) => {
       return ack?.({ ok: true, item: updated, items: ShopItems.list({ onlyEnabled: false }) });
     }
     ack?.({ error: '未知操作' });
+  });
+
+  // 管理员：系统更新（检查新版本 / 一键更新）
+  socket.on('admin:update:check', async (payload, ack) => {
+    const user = socket.data.user;
+    if (!user || !user.isAdmin) return ack?.({ error: '仅管理员可操作' });
+    try {
+      const info = await checkUpdate();
+      ack?.({ ok: true, ...info });
+    } catch (err) {
+      ack?.({ error: err.message || '检查更新失败' });
+    }
+  });
+
+  socket.on('admin:update:apply', async (payload, ack) => {
+    const user = socket.data.user;
+    if (!user || !user.isAdmin) return ack?.({ error: '仅管理员可操作' });
+    if (updateBusy) return ack?.({ error: '已有更新正在进行，请稍候' });
+    updateBusy = true;
+
+    let prep;
+    try {
+      prep = await prepareUpdate();
+    } catch (err) {
+      updateBusy = false;
+      return ack?.({ error: err.message || '拉取镜像失败' });
+    }
+
+    ack?.({
+      ok: true,
+      projectDir: prep.projectDir,
+      image: prep.image,
+      message: `镜像 ${prep.image} 已更新，3 秒后自动重建容器`,
+    });
+
+    // 先让响应送达前端，再启动重建 —— 重建会杀掉当前进程
+    setTimeout(() => {
+      triggerRebuild(prep.projectDir).catch((err) => {
+        console.error('[update] 重建容器失败：', err.message);
+        updateBusy = false;
+      });
+    }, 3000);
   });
 
   // 管理员：调整玩家积分 / 清除胜率

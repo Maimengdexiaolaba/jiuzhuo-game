@@ -14,6 +14,10 @@ services:
       ADMIN_PASSWORD: "admin"
     volumes:
       - ./data:/app/data
+      # 一键更新：挂载 docker.sock，让管理后台能拉镜像并重建本容器
+      # ⚠️ 挂载后容器内拥有控制宿主机所有容器的能力（等同 root 权限）
+      #    不需要网页一键更新就删掉下面这一行，改用 SSH 手动更新
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9876/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

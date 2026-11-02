@@ -7,6 +7,98 @@ export function mountAdmin(App) {
   document.getElementById('btn-admin-back').addEventListener('click', () => App.navigate('lobby'));
   document.getElementById('btn-admin-new').addEventListener('click', () => openEditModal(App, null));
 
+  /* ---------------- 系统更新 ---------------- */
+  const upSub = document.getElementById('admin-update-sub');
+  const upBody = document.getElementById('admin-update-body');
+  const btnCheck = document.getElementById('btn-update-check');
+  const btnApply = document.getElementById('btn-update-apply');
+  let lastUpdate = null;
+
+  function renderUpdate(info) {
+    lastUpdate = info;
+    const sizeMb = info.imageSize ? (info.imageSize / 1024 / 1024).toFixed(0) : '—';
+    const rows = [
+      ['当前版本', `v${escapeHTML(info.current || '?')}`],
+      ['最新版本', info.latest ? `v${escapeHTML(info.latest)}` : '— 联网查询失败'],
+      ['一键更新', info.enabled
+        ? '<span class="au-on">已启用</span>'
+        : '<span class="au-off">未启用（未挂载 docker.sock）</span>'],
+      ['本地镜像', info.imageCreated ? `${fmtTime(new Date(info.imageCreated).getTime())} · ${sizeMb} MB` : '—'],
+    ];
+    upBody.innerHTML = `
+      <div class="au-grid">
+        ${rows.map(([k, v]) => `<div class="au-row"><span>${k}</span><b>${v}</b></div>`).join('')}
+      </div>
+      ${info.releaseUrl ? `<a class="au-link" href="${escapeHTML(info.releaseUrl)}" target="_blank" rel="noopener">查看 Release 更新说明 →</a>` : ''}
+      ${info.hasUpdate ? '<div class="au-tip is-on">发现新版本，更新后请强刷浏览器（Ctrl+Shift+R）</div>' : ''}
+      ${!info.enabled ? '<div class="au-tip">未挂载 <code>/var/run/docker.sock</code>，请按 README「更新」章节手动执行</div>' : ''}
+    `;
+    btnApply.disabled = !info.enabled || !info.hasUpdate;
+    upSub.textContent = info.message || '';
+  }
+
+  async function doCheck() {
+    btnCheck.disabled = true;
+    btnApply.disabled = true;
+    upSub.textContent = '正在检查…';
+    const res = await App.call('admin:update:check', {});
+    btnCheck.disabled = false;
+    if (res.error) {
+      upSub.textContent = res.error;
+      return;
+    }
+    renderUpdate(res);
+  }
+
+  btnCheck.onclick = doCheck;
+
+  btnApply.onclick = async () => {
+    if (!lastUpdate) return;
+    const ok = await confirmDialog({
+      title: '确认更新',
+      message: `将拉取 <b>${escapeHTML(lastUpdate.image || 'latest')}</b> 镜像并重建容器，服务中断约 10~40 秒（首次需下载 docker-cli 会更久）。确定继续？`,
+      confirmText: '开始更新',
+    });
+    if (!ok) return;
+
+    btnApply.disabled = true;
+    btnCheck.disabled = true;
+    upSub.textContent = '正在拉取镜像，请勿关闭页面…';
+    const res = await App.call('admin:update:apply', {});
+    if (res.error) {
+      upSub.textContent = res.error;
+      btnCheck.disabled = false;
+      btnApply.disabled = false;
+      return;
+    }
+
+    upSub.textContent = res.message || '镜像已更新，正在重建容器…';
+    upBody.innerHTML = `
+      <div class="au-tip is-on">
+        容器正在重建，页面会自动重连并刷新。<br />
+        若 1 分钟后仍未恢复，请到 NAS 查看 <code>docker ps</code>。
+      </div>`;
+
+    // 等重建启动后再轮询，健康检查恢复即刷新
+    setTimeout(() => {
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries += 1;
+        try {
+          const r = await fetch('/healthz', { cache: 'no-store' });
+          if (r.ok) {
+            clearInterval(timer);
+            location.reload();
+          }
+        } catch { /* 重建中连接会失败，继续等 */ }
+        if (tries > 60) {
+          clearInterval(timer);
+          upSub.textContent = '重建超时，请手动刷新页面或到 NAS 查看容器状态';
+        }
+      }, 2000);
+    }, 8000);
+  };
+
   tbody.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
@@ -48,6 +140,8 @@ export function mountAdmin(App) {
     App.state.adminUsers = res.users;
     sub.textContent = `共 ${res.users.length} 个账号 · ${res.online} 人在线 · ${res.rooms} 个房间`;
     render(App);
+    // 每次进入后台时查一次（mountAdmin 在应用启动就绑定了，那时还没登录）
+    doCheck();
   }
 
   async function openEditModal(ctx, user) {

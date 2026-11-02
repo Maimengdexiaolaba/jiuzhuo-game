@@ -881,3 +881,43 @@ body.in-room .room-shell { min-height: 0; min-width: 0; flex: 1; }
   .shop-item { flex-wrap: wrap; }
   .shop-item-side { flex-direction: row; align-items: center; gap: 12px; }
 }
+
+/* ---------- 管理后台：系统更新 ---------- */
+
+.admin-update-card { margin-top: 18px; padding: 18px 20px; }
+.au-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.au-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.au-body { margin-top: 14px; }
+.au-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 4px 20px;
+}
+.au-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 13px; padding: 7px 0; border-bottom: 1px dashed var(--line-soft);
+}
+.au-row span { color: var(--muted); flex: none; }
+.au-row b { font-weight: 600; text-align: right; word-break: break-all; }
+.au-on { color: #7fd6a4; }
+.au-off { color: #e8a67a; }
+.au-link {
+  display: inline-block; margin-top: 12px; font-size: 12.5px;
+  color: var(--gold-strong); text-decoration: none;
+}
+.au-link:hover { text-decoration: underline; }
+.au-tip {
+  margin-top: 12px; padding: 9px 12px; border-radius: 10px;
+  font-size: 12.5px; line-height: 1.65; color: var(--text-dim);
+  background: var(--panel); border: 1px solid var(--line-soft);
+}
+.au-tip.is-on {
+  color: #cfe9d8; border-color: rgba(127, 214, 164, .35);
+  background: rgba(127, 214, 164, .08);
+}
+.au-tip code {
+  padding: 1px 5px; border-radius: 4px; font-size: 11.5px;
+  background: rgba(0, 0, 0, .22);
+}
